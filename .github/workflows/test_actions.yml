@@ -15,4 +15,4 @@ jobs:
         env:
           POLYGON_API_KEY: ${{ secrets.POLYGON_API_KEY }}
           GCP_SERVICE_ACCOUNT_JSON: ${{ secrets.GCP_SERVICE_ACCOUNT_JSON }}
-        run: python utils/test_connection.py
+        run: python utils/utils_test_connection.py
