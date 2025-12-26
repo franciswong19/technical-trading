@@ -32,7 +32,7 @@ jobs:
       - name: Install dependencies
         # Now runs inside ./momentum_gauges
         run: |
-          pip install pandas numpy gspread oauth2client plotly polygon-api-client requests datetime ta-lib os json
+          pip install pandas numpy gspread oauth2client plotly polygon-api-client requests datetime ta-lib
 
       - name: Run Trend Analysis
         env:
@@ -63,7 +63,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install pandas numpy gspread oauth2client polygon-api-client requests datetime ta-lib os json
+          pip install pandas numpy gspread oauth2client polygon-api-client requests datetime ta-lib
 
       - name: Run Technical Indicators
         env:
