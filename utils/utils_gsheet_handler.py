@@ -1,4 +1,6 @@
 # gsheet_handler.py
+import os
+import json
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import pandas as pd
@@ -11,20 +13,27 @@ from gspread.utils import ValueInputOption
 
 def authenticate_gsheet(creds_file_path):
     """
-    Authenticates with Google Sheets API and returns the gspread client object.
-
-    Parameters:
-    - creds_file_path (str): The full, resolved path to the service account JSON file.
-
-    Returns:
-    - gspread.Client: Authenticated client object.
+    Authenticates with Google Sheets API. 
+    Checks for a GitHub Secret first, then falls back to the local JSON file.
     """
     scope = [
         "https://www.googleapis.com/auth/spreadsheets",
         "https://www.googleapis.com/auth/drive"
     ]
+    
     try:
-        creds = ServiceAccountCredentials.from_json_keyfile_name(creds_file_path, scopes=scope)
+        # 1. Check if we are running on GitHub (looking for the Secret)
+        google_json_str = os.getenv('SERVICE_ACCOUNT_KEY_GITHUB')
+
+        if google_json_str:
+            print("Environment variable found. Authenticating via GitHub Secret...")
+            creds_info = json.loads(google_json_str)
+            creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_info, scopes=scope)
+        else:
+            # 2. Fallback to local file if Secret is not found
+            print(f"Environment variable not found. Using local file: {creds_file_path}")
+            creds = ServiceAccountCredentials.from_json_keyfile_name(creds_file_path, scopes=scope)
+
         client = gspread.authorize(creds)
         print("GSheet authentication successful.")
         return client
