@@ -3,14 +3,14 @@ import json
 
 def test_secrets():
     print("Checking for Polygon Key...")
-    poly_key = os.getenv('POLYGON_API_KEY')
+    poly_key = os.getenv('POLYGON_API_KEY_GITHUB')
     if poly_key:
         print(f"✅ Polygon Key Found! (Ends with: ...{poly_key[-3:]})")
     else:
         print("❌ Polygon Key Missing!")
 
     print("\nChecking for Google Credentials...")
-    g_json = os.getenv('GCP_SERVICE_ACCOUNT_JSON')
+    g_json = os.getenv('SERVICE_ACCOUNT_KEY_GITHUB')
     if g_json:
         try:
             parsed = json.loads(g_json)
