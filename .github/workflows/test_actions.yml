@@ -1,0 +1,18 @@
+name: Test GitHub Secrets
+on: 
+  workflow_dispatch: # This adds a "Run" button in the GitHub UI
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - name: Run Test Script
+        env:
+          POLYGON_API_KEY: ${{ secrets.POLYGON_API_KEY }}
+          GCP_SERVICE_ACCOUNT_JSON: ${{ secrets.GCP_SERVICE_ACCOUNT_JSON }}
+        run: python utils/test_connection.py
