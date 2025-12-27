@@ -15,6 +15,7 @@ sys.path.append(str(project_root))
 
 from utils import utils_gsheet_handler
 from utils import utils_technical_indicators
+from utils import utils_email_handler
 
 # ==========================================
 # USER CONFIGURATION
@@ -153,6 +154,15 @@ def generate_visual_report(df_all):
     print(f"Interactive report saved: {file_path}")
     # fig.show() is removed/commented out for automated runs
 
+    # --- ADD THIS TO SEND EMAIL ---
+    # Change this to your actual email address
+    TARGET_EMAIL = "francis.lunkai.wong@gmail.com" 
+    
+    utils_email_handler.send_report_email(
+        receiver_email=TARGET_EMAIL,
+        file_path=str(file_path),
+        sender_email=TARGET_EMAIL  # Usually same as receiver for personal reports
+    )
 
 
 # ==========================================
