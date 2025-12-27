@@ -6,6 +6,7 @@ import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from pathlib import Path
+from datetime import datetime, timedelta
 
 # --- PATH SETUP ---
 current_dir = Path(__file__).resolve().parent
@@ -144,12 +145,13 @@ def generate_visual_report(df_all):
     output_folder.mkdir(parents=True, exist_ok=True)
 
     # 2. Save the file into that folder
-    today_str = (pd.Timestamp.now() - pd.Timedelta(days=1)).strftime('%Y%m%d')
+    
+    today_str = (datetime.now() - timedelta(days=1)).strftime('%Y%m%d')
     file_path = output_folder / f"data_viz_mg_picks_trend_analysis_daily_{today_str}.html"
 
     fig.write_html(str(file_path))
-    print(f"Interactive report saved to: {file_path}")
-    fig.show()
+    print(f"Interactive report saved: {file_path}")
+    # fig.show() is removed/commented out for automated runs
 
 
 
