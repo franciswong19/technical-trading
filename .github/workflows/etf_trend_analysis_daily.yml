@@ -18,6 +18,10 @@ jobs:
           python-version: '3.10'
       - name: Install Dependencies
         run: pip install pandas numpy gspread oauth2client plotly polygon-api-client requests ta-lib
+      - name: Create Creds Directory
+        run: mkdir -p creds  # Ensures the folder exists
+      - name: Setup App Password File
+        run: echo "${{ secrets.EMAIL_APP_PASSWORD_GITHUB }}" > creds/app_password
       - name: Run Script
         env:
           SERVICE_ACCOUNT_KEY_GITHUB: ${{ secrets.SERVICE_ACCOUNT_KEY_GITHUB }}
