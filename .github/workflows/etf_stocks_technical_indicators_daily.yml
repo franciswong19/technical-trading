@@ -22,4 +22,4 @@ jobs:
         env:
           SERVICE_ACCOUNT_KEY_GITHUB: ${{ secrets.SERVICE_ACCOUNT_KEY_GITHUB }}
           POLYGON_API_KEY_GITHUB: ${{ secrets.POLYGON_API_KEY_GITHUB }}
-        run: python data_processing_mg_picks_technical_indicators.py # Ensure filename is correct
+        run: python data_processing_mg_picks_technical_indicators_daily.py # Ensure filename is correct

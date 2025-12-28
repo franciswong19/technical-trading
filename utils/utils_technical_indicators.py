@@ -95,14 +95,16 @@ def get_technical_indicators(df):
     df["MINUS_DI"] = talib.MINUS_DI(high, low, close, timeperiod=14)
     df["DI_diff"] = df["PLUS_DI"] - df["MINUS_DI"]
 
-    # 3. Bollinger Bands (Using 100 period as per your snippet)
-    upper, middle, lower = talib.BBANDS(close, timeperiod=100, nbdevup=2, nbdevdn=2, matype=0)
-    df["BB_Upper"] = upper
-    df["BB_Lower"] = lower
+    # 3. Donchian Channels Calculation (Last N candles, offset=1)
+    for n in [5, 10, 20]:
+        df[f"donchian_high{n}"] = df["high"].rolling(window=n).max().shift(1)
+        df[f"donchian_low{n}"] = df["low"].rolling(window=n).min().shift(1)
 
     # 4. RSI (14)
     df["RSI"] = talib.RSI(close, timeperiod=14)
 
+    
+    
     return df
 
 
@@ -127,17 +129,14 @@ def calculate_crossovers(df):
     # +DI > -DI
     df["adx_crossover"] = df["DI_diff"]
 
-    # Price > Upper Bollinger Band
-    df["close_bbupper_crossover"] = df["close"] - df["BB_Upper"]
+    # Donchian Crossovers
+    for n in [5, 10, 20]:
+        df[f"close_donchian_high{n}_crossover"] = df["close"] - df[f"donchian_high{n}"]
+        df[f"donchian_low{n}_close_crossover"] = df[f"donchian_low{n}"] - df["close"]
 
-    # Price < Lower Bollinger Band (Met if result is positive)
-    df["bblower_close_crossover"] = df["BB_Lower"] - df["close"]
-
-    # RSI < 30 (Met if result is positive)
-    df["rsi_30_crossover"] = 30 - df["RSI"]
-
-    # RSI > 70 (Met if result is positive)
+    # RSI > 70 & 80 (Met if result is positive)
     df["rsi_70_crossover"] = df["RSI"] - 70
+    df["rsi_80_crossover"] = df["RSI"] - 80
 
     return df
 
@@ -228,6 +227,7 @@ def process_technical_indicators(ticker, end_date, lookback=365, multiplier=1, t
     # 2. Calculate Technicals & Crossovers
     # Ensure these function names match your library
     df = get_technical_indicators(df)
+
     df = calculate_crossovers(df)
 
     # 3. Filter to the specific evaluation end point (The "Time-Travel Gatekeeper")
