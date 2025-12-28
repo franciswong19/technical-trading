@@ -22,7 +22,7 @@ INPUT_TAB_NAME = "shortlist"
 OUTPUT_TAB_NAME = "df_processed"
 
 # Polygon API Settings
-LOOKBACK = 365
+LOOKBACK = 365 #need at least 250 due to EMA-150 calculations
 MULTIPLIER = 1
 TIMESPAN = "day"
 WINDOW = 10
