@@ -2,7 +2,7 @@ name: ETF Technical Indicators
 
 on:
   schedule:
-    - cron: '30 9 * * 2-6' # 9:30 AM UTC
+    - cron: '30 7 * * 2-6' # 7:30 AM UTC
   workflow_dispatch:
 
 jobs:

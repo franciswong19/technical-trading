@@ -27,8 +27,10 @@ LOOKBACK = 150
 MULTIPLIER = 1
 TIMESPAN = "day"
 
-TARGET_CATEGORIES = ["General ETF", "Sector ETF", "Sub-sector ETF", "Commodities"]
-REF_DAYS = [5, 10, 20, 30, 40, 50, 65]
+TARGET_CATEGORIES = ["Semicon", "Software", "Comm Svc", "Healthcare", "Finance", 
+                    "Consumer Discretionary", "Alternative Energy", "Alternative Investments"]
+
+REF_DAYS = [5, 10, 20, 40, 65]
 
 
 # ==========================================
@@ -135,7 +137,7 @@ def generate_visual_report(df_all):
     fig.update_layout(
         height=num_rows * 350,
         width=1400,
-        title_text="<b>Ticker Momentum & Forward Return Analysis</b>",
+        title_text="<b>Stock Trend Analysis</b>",
         template="plotly_white",
         showlegend=False,
         margin=dict(t=100, b=50, l=80, r=50)
@@ -148,16 +150,19 @@ def generate_visual_report(df_all):
     # 2. Save the file into that folder
     
     today_str = (datetime.now() - timedelta(days=1)).strftime('%Y%m%d')
-    file_path = output_folder / f"data_viz_mg_picks_trend_analysis_daily_{today_str}.html"
+    file_path = output_folder / f"data_viz_mg_picks_stock_trend_analysis_daily_{today_str}.html"
 
     fig.write_html(str(file_path))
     print(f"Interactive report saved: {file_path}")
     # fig.show() is removed/commented out for automated runs
 
-    # --- ADD THIS TO SEND EMAIL ---
-    # Change this to your actual email address
-    TARGET_EMAIL = "francis.lunkai.wong@gmail.com" 
-    
+    # --- ADD THIS TO SEND EMAIL ---   
+    report_date = datetime.now().strftime('%Y-%m-%d')
+
+    EMAIL_SUBJECT = f"Stock trend analysis report {report_date}"
+    EMAIL_CONTENT = f"This is the attached report on stock trend analysis on {report_date}."
+    TARGET_EMAIL = "francis.lunkai.wong@gmail.com"
+
     utils_email_handler.send_report_email(
         receiver_email=TARGET_EMAIL,
         file_path=str(file_path),
