@@ -21,7 +21,7 @@ from utils import utils_email_handler
 # USER CONFIGURATION
 # ==========================================
 SPREADSHEET_ID = "13RfATfhAOOp_RCr3a_clcwXjrVdaFRib0_JTxUj729Q"
-INPUT_TAB_NAME = "shortlist"
+INPUT_TAB_NAME = "etf shortlist"
 
 LOOKBACK = 150
 MULTIPLIER = 1
