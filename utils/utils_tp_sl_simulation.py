@@ -4,9 +4,9 @@ import pandas as pd
 from .utils_technical_indicators import get_ohlc_data
 
 
-def run_simulation(ticker, pick_date, calendar_days, tp_sl_list, trading_days_limit=10):
+def run_simulation(ticker, pick_date, calendar_days, tp_sl_list, trading_days_limit=10, ts_pct=0.08):
     """
-    Part 2 & 3: Consolidated function to fetch data and simulate TP/SL performance.
+    Part 2 & 3: Consolidated function to fetch data and simulate TP/SL/TS performance.
     """
     # --- PART 2: Fetch OHLC Data ---
     pick_dt = pd.to_datetime(pick_date)
@@ -24,7 +24,7 @@ def run_simulation(ticker, pick_date, calendar_days, tp_sl_list, trading_days_li
     if df_ohlc is None or df_ohlc.empty:
         return {"error": "No OHLC data returned from Polygon"}
 
-    # Exclude the 'Date' specified in the input (Part 2 requirement)
+    # Exclude the 'Date' specified in the input
     df_ohlc['date_only'] = pd.to_datetime(df_ohlc['t']).dt.date
     df_ohlc = df_ohlc[df_ohlc['date_only'] > pick_dt.date()].copy()
     df_ohlc = df_ohlc.sort_values('t').reset_index(drop=True)
@@ -32,11 +32,7 @@ def run_simulation(ticker, pick_date, calendar_days, tp_sl_list, trading_days_li
     if df_ohlc.empty:
         return {"error": "No data available after the pick date"}
 
-    # Print first 5 rows (Part 2 requirement)
-    print(f"  -> Debug: First 5 rows for {ticker} (starting {df_ohlc['date_only'].iloc[0]}):")
-    print(df_ohlc.head(5).to_string(index=False))
-
-    # --- PART 3: Simulate TP & SL ---
+    # --- PART 3: Simulate TP, SL & Trailing Stop ---
     try:
         # 1. Identify valid trading days
         unique_days = sorted(df_ohlc['date_only'].unique())
@@ -62,35 +58,58 @@ def run_simulation(ticker, pick_date, calendar_days, tp_sl_list, trading_days_li
         buy_price = buy_row['open']
         buy_timestamp = buy_row['t']
 
-        # 5. Calculate breaches per target group
+        # 5. Iterative Loop for Trailing Stop and Existing TP/SL Breaches
+        maxima = 0
+        ts_breach_row = None
+        
+        # We also need to calculate TP/SL breaches
         df['is_tp_breached'] = 0
         df['is_sl_breached'] = 0
-
         for tp_mult, sl_mult, start_seq, end_seq in tp_sl_list:
             mask = (df['trading_day_sequence'] >= start_seq) & (df['trading_day_sequence'] <= end_seq)
             df.loc[mask & (df['high'] >= buy_price * tp_mult), 'is_tp_breached'] = 1
             df.loc[mask & (df['low'] <= buy_price * sl_mult), 'is_sl_breached'] = 1
 
-        # 6. Find earliest breach
+        # Calculate Trailing Stop iteratively
+        for idx, row in df.iterrows():
+            # Update Maxima
+            if row['trading_timestamp_sequence'] == 0:
+                maxima = row['high']
+            else:
+                maxima = max(maxima, row['high'])
+            
+            # Check for TS Breach
+            trigger_sell_price = maxima * (1 - ts_pct)
+            if row['low'] <= trigger_sell_price:
+                ts_breach_row = row.copy()
+                ts_breach_row['ts_sell_price'] = trigger_sell_price
+                break # Stop loop once TS is breached
+
+        # 6. Find earliest breach of all three strategies
         tp_hits = df[df['is_tp_breached'] == 1]
         sl_hits = df[df['is_sl_breached'] == 1]
 
         earliest_tp = tp_hits['trading_timestamp_sequence'].min() if not tp_hits.empty else float('inf')
         earliest_sl = sl_hits['trading_timestamp_sequence'].min() if not sl_hits.empty else float('inf')
+        earliest_ts = ts_breach_row['trading_timestamp_sequence'] if ts_breach_row is not None else float('inf')
 
-        # 7. Determine Final Outcome
-        if earliest_tp < earliest_sl:
-            exit_row = df[df['trading_timestamp_sequence'] == earliest_tp].iloc[0]
-            sell_price, trigger = exit_row['high'], "Take Profit"
-        elif earliest_sl <= earliest_tp and earliest_sl != float('inf'):
-            exit_row = df[df['trading_timestamp_sequence'] == earliest_sl].iloc[0]
-            sell_price, trigger = exit_row['low'], "Stop Loss"
-        else:
-            # End of Holding: 10th day at 9:40 AM
-            exit_cand = df[
-                (df['trading_day_sequence'] == trading_days_limit - 1) & (df['trading_interval_sequence'] == 0)]
+        # 7. Determine Final Outcome based on what happened first
+        first_event = min(earliest_tp, earliest_sl, earliest_ts)
+
+        if first_event == float('inf'):
+            # No breach: End of Holding (10th day at 9:40 AM)
+            exit_cand = df[(df['trading_day_sequence'] == trading_days_limit - 1) & (df['trading_interval_sequence'] == 0)]
             exit_row = exit_cand.iloc[0] if not exit_cand.empty else df.iloc[-1]
             sell_price, trigger = exit_row['open'], "End of Holding Period"
+        elif first_event == earliest_tp:
+            exit_row = df[df['trading_timestamp_sequence'] == earliest_tp].iloc[0]
+            sell_price, trigger = exit_row['high'], "Take Profit"
+        elif first_event == earliest_sl:
+            exit_row = df[df['trading_timestamp_sequence'] == earliest_sl].iloc[0]
+            sell_price, trigger = exit_row['low'], "Stop Loss"
+        else: # Trailing Stop was first
+            exit_row = ts_breach_row
+            sell_price, trigger = ts_breach_row['ts_sell_price'], "Trailing Stop"
 
         return {
             "buy price": buy_price, "sell price": sell_price,

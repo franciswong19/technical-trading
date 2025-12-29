@@ -30,6 +30,8 @@ TP_SL_CONFIG = [
     [1.10, 0.95, 4, TRADING_DAYS - 1]
 ]
 
+TS_PCT = 0.08
+
 
 def main():
     print("--- Starting Backtest Simulation ---")
@@ -41,15 +43,24 @@ def main():
     df_raw = utils_gsheet_handler.extract_data(client, SPREADSHEET_ID, INPUT_TAB_NAME)
     if df_raw is None or df_raw.empty: return
 
-    # Filter and dedupe
+    # 1. Filter and dedupe
     df = df_raw[
         (df_raw['is_positive_mg'] == 1) & (df_raw['mcap'] >= 500) &
         ((df_raw['is_processed'] != 1) | (df_raw['is_processed'].isna()) | (df_raw['is_processed'] == ""))
         ].copy()
 
-    subset_cols = ['date', 'ticker', 'sector', 'price', 'mcap', 'is_positive_mg']
-    df = df[subset_cols].drop_duplicates().reset_index(drop=True)
+    # 2. Define the columns you want to deduplicate by (the "keys")
+    dedupe_keys = ['date', 'ticker', 'sector', 'is_positive_mg']
 
+    # 3. Use groupby to find the maximum for mcap and price within those groups
+    df = df.groupby(dedupe_keys, as_index=False).agg({
+        'mcap': 'max',
+        'price': 'max'
+    })
+
+    # Optional: Reorder columns to match your original subset_cols if needed
+    subset_cols = ['date', 'ticker', 'sector', 'price', 'mcap', 'is_positive_mg']
+    df = df[subset_cols].reset_index(drop=True)
     if df.empty:
         print("No new valid picks found for simulation.")
         return
@@ -66,6 +77,7 @@ def main():
             pick_date=row['date'],
             calendar_days=CALENDAR_DAYS,
             tp_sl_list=TP_SL_CONFIG,
+            ts_pct = TS_PCT,
             trading_days_limit=TRADING_DAYS
         )
 
