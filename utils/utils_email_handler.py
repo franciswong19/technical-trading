@@ -14,7 +14,7 @@ project_root = current_dir.parent
 
 def get_app_password():
     """Reads the app password from the creds/app_password file."""
-    pass_path = project_root / "creds" / "app_password"
+    pass_path = project_root / "creds" / "app_password.txt"
     try:
         with open(pass_path, "r") as f:
             # .strip() removes any accidental newlines or spaces
@@ -23,7 +23,7 @@ def get_app_password():
         print(f"Error: App password file not found at {pass_path}")
         return None
 
-def send_report_email(receiver_email, file_path, sender_email="your_email@gmail.com"):
+def send_report_email(receiver_email, file_path, subject=None, body=None, sender_email="your_email@gmail.com"):
     """
     Sends an email with the report attached using password from creds file.
     """
@@ -31,9 +31,12 @@ def send_report_email(receiver_email, file_path, sender_email="your_email@gmail.
     if not app_password:
         return False
 
+    # Fallback to defaults if no custom parameters are provided
     date_str = datetime.now().strftime('%Y-%m-%d')
-    subject = f"ETF trend analysis report {date_str}"
-    body = f"This is the attached report on ETF trend analysis on {date_str}."
+    if subject is None:
+        subject = f"Test email on {date_str}"
+    if body is None:
+        body = f"This is a test email sent on {date_str}."
 
     # Create the root message and fill in headers
     msg = MIMEMultipart()
