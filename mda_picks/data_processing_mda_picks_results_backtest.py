@@ -25,9 +25,9 @@ CALENDAR_DAYS = 20
 
 # TP, SL, Start Day, End Day
 TP_SL_CONFIG = [
-    [1.20, 0.85, 0, 1],
+    [1.15, 0.90, 0, 1],
     [1.15, 0.90, 2, 3],
-    [1.10, 0.95, 4, TRADING_DAYS - 1]
+    [1.15, 0.90, 4, TRADING_DAYS - 1]
 ]
 
 
