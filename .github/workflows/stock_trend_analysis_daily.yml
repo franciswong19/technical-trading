@@ -21,7 +21,7 @@ jobs:
       - name: Create Creds Directory
         run: mkdir -p creds  # Ensures the folder exists
       - name: Setup App Password File
-        run: echo "${{ secrets.EMAIL_APP_PASSWORD_GITHUB }}" > creds/app_password
+        run: echo "${{ secrets.EMAIL_APP_PASSWORD_GITHUB }}" > creds/app_password.txt
       - name: Run Script
         env:
           SERVICE_ACCOUNT_KEY_GITHUB: ${{ secrets.SERVICE_ACCOUNT_KEY_GITHUB }}
