@@ -2,7 +2,7 @@ name: MDA Picks Technical Indicators
 
 on:
   schedule:
-    - cron: '30 5 * * 2-6' # 5:30 AM UTC
+    - cron: '0 6 * * 2-6' # 6:00 AM UTC
   workflow_dispatch:
 
 jobs:
