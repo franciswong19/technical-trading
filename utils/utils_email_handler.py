@@ -12,16 +12,41 @@ from pathlib import Path
 current_dir = Path(__file__).resolve().parent
 project_root = current_dir.parent
 
-def get_app_password():
-    """Reads the app password from the creds/app_password file."""
-    pass_path = project_root / "creds" / "app_password.txt"
+def get_app_password(filename="app_password.txt"):
+    """
+    Retrieves the Email App Password.
+    Checks for a GitHub Secret (environment variable) first.
+    Falls back to loading from a text file inside the 'creds' folder.
+    """
+    # 1. First, try to get the key from the GitHub Secret / Environment Variable
+    # Ensure 'EMAIL_APP_PASSWORD_GITHUB' matches the key name in your YML 'env' section
+    app_password = os.getenv('EMAIL_APP_PASSWORD_GITHUB')
+    
+    if app_password:
+        print("Using EMAIL_APP_PASSWORD from environment variables.")
+        return app_password
+
+    # 2. Fallback: Load from the local text file if not in the cloud
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    # '..' moves up to project root, then into 'creds'
+    key_path = os.path.join(current_dir, '..', 'creds', filename)
+
     try:
-        with open(pass_path, "r") as f:
-            # .strip() removes any accidental newlines or spaces
-            return f.read().strip()
-    except FileNotFoundError:
-        print(f"Error: App password file not found at {pass_path}")
-        return None
+        if os.path.exists(key_path):
+            with open(key_path, "r") as f:
+                app_password = f.read().strip()
+                if app_password:
+                    print(f"Using local app password from: {filename}")
+                    return app_password
+                else:
+                    print(f"Warning: {filename} is empty.")
+        else:
+            print(f"Error: Local password file '{filename}' not found at {os.path.abspath(key_path)}")
+            
+    except Exception as e:
+        print(f"An error occurred while reading the local password: {e}")
+        
+    return ""
 
 def send_report_email(receiver_email, file_path, subject=None, body=None, sender_email="your_email@gmail.com"):
     """
