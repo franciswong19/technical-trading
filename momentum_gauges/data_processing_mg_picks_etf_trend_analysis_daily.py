@@ -164,7 +164,9 @@ def generate_visual_report(df_all):
     utils_email_handler.send_report_email(
         receiver_email=TARGET_EMAIL,
         file_path=str(file_path),
-        sender_email=TARGET_EMAIL  # Usually same as receiver for personal reports
+        sender_email=TARGET_EMAIL,  # Usually same as receiver for personal reports
+        subject=EMAIL_SUBJECT,
+        body=EMAIL_CONTENT
     )
 
 
