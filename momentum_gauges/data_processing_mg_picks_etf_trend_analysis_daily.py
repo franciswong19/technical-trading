@@ -154,20 +154,24 @@ def generate_visual_report(df_all):
     print(f"Interactive report saved: {file_path}")
     # fig.show() is removed/commented out for automated runs
 
-    # --- ADD THIS TO SEND EMAIL ---   
-    report_date = datetime.now().strftime('%Y-%m-%d')
+    # 1. Fetch the list of recipients (from Secret or local file)
+    RECIPIENTS = utils_email_handler.get_receiver_emails()
+    
+    if not RECIPIENTS:
+        print("No recipients found. Skipping email.")
+    else:
+        report_date = datetime.now().strftime('%Y-%m-%d')
+        EMAIL_SUBJECT = f"ETF trend analysis report {report_date}"
+        EMAIL_CONTENT = f"Hello. Please find the attached report on ETF trend analysis, generated on {report_date}."
+        TARGET_EMAIL = "francis.lunkai.wong@gmail.com"
 
-    EMAIL_SUBJECT = f"ETF trend analysis report {report_date}"
-    EMAIL_CONTENT = f"This is the attached report on ETF trend analysis on {report_date}."
-    TARGET_EMAIL = "francis.lunkai.wong@gmail.com"
-
-    utils_email_handler.send_report_email(
-        receiver_email=TARGET_EMAIL,
-        file_path=str(file_path),
-        sender_email=TARGET_EMAIL,  # Usually same as receiver for personal reports
-        subject=EMAIL_SUBJECT,
-        body=EMAIL_CONTENT
-    )
+        utils_email_handler.send_report_email(
+            receiver_list=RECIPIENTS,
+            file_path=str(file_path),
+            sender_email=TARGET_EMAIL,  # Usually same as receiver for personal reports
+            subject=EMAIL_SUBJECT,
+            body=EMAIL_CONTENT
+        )
 
 
 # ==========================================
