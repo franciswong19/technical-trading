@@ -1,5 +1,14 @@
 # utils/utils_disclaimer.py
 
+def get_notice_box_html():
+    return """
+    <div class="notice-box">
+        <strong>NOTICE TO RECIPIENT:</strong> This proprietary document is provided on a confidential basis for informational purposes only. The sender is not liable for any actions or financial decisions taken based on this data. 
+        <br><br> 
+        <strong>Please refer to the LEGAL DISCLOSURE at the bottom of this article first before proceeding with the rest of the report.</strong> Reproduction or redistribution of this report in any form is strictly prohibited.
+    </div>
+    """
+    
 def get_legal_footer_html():
     return """
     <div class="legal-footer">
@@ -16,13 +25,13 @@ def get_legal_footer_html():
         <br><br>
         
         <strong>III. Risk Disclosure</strong><br>
-        Investing in securities—including ETFs and individual stocks—involves significant risk of loss. Market conditions can change rapidly based on Federal Reserve policy, economic data, and shifting sector momentum. Past performance is not indicative of future results. No representation or warranty, express or implied, is made as to the accuracy or completeness of the information contained herein, and the author shall not be held liable for any investment losses or damages resulting from the use of this data.
+        Investing in securities, including ETFs and individual stocks, involves significant risk of loss. Market conditions can change rapidly based on Federal Reserve policy, economic data, and shifting sector momentum. Past performance is not indicative of future results. No representation or warranty, express or implied, is made as to the accuracy or completeness of the information contained herein, and the author shall not be held liable for any investment losses or damages resulting from the use of this data.
         <br><br>
         
         <strong>IV. Independent Verification</strong><br>
         Recipients are urged to conduct their own independent research and consult with a licensed financial professional or investment advisor before making any financial decisions. The author may hold positions in the securities or sectors mentioned in this report and is under no obligation to update this information as market conditions evolve.
         <br><br>
         
-        <em>Data provided via Polygon.io. Generated in Singapore Standard Time (SGT).</em>
+        <em>Data provided via Polygon.io.</em>
     </div>
     """

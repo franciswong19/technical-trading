@@ -16,6 +16,8 @@ sys.path.append(str(project_root))
 from utils import utils_gsheet_handler
 from utils import utils_technical_indicators
 from utils import utils_email_handler
+from utils import utils_disclaimer
+from utils import utils_report_css
 
 # ==========================================
 # USER CONFIGURATION
@@ -75,7 +77,6 @@ def calculate_aligned_returns(df_ohlc, ticker, category, ref_days):
 # ==========================================
 
 def generate_visual_report(df_all):
-    # Standardize categories and fetch unique reference days
     categories = [c for c in TARGET_CATEGORIES if c in df_all['category'].unique()]
     ref_days = sorted(df_all['ref_day'].unique())
     report_date = datetime.now().strftime('%Y-%m-%d')
@@ -132,6 +133,7 @@ def generate_visual_report(df_all):
             chart_html = fig.to_html(full_html=False, include_plotlyjs='cdn' if sections_html == "" else False)
             table_rows = "".join([f"<tr><td>{s['Ticker']}</td><td>{s['Perf']}</td></tr>" for s in latest_stats])
 
+
             sections_html += f"""
             <table class="category-block">
                 <tr><td colspan="2" class="title-cell">{display_cat} (since {rd} trading days ago)</td></tr>
@@ -148,44 +150,15 @@ def generate_visual_report(df_all):
             <div style="height: 40px;"></div>
             """
 
+    # INTEGRATION OF UTILS INTO HTML TEMPLATE
     html_template = f"""
     <html>
     <head>
-        <style>
-            body {{ font-family: Arial, sans-serif; margin: 0; padding: 40px; color: #333; line-height: 1.8; }}
-            
-            /* Navy Blue Ribbon Headers */
-            .header-ribbon {{ background-color: #002366; color: white; padding: 30px 40px; margin: -40px -40px 30px -40px; position: relative; }}
-            .header-ribbon h1 {{ margin: 0; font-size: 28px; font-weight: bold; }}
-            .header-ribbon h2 {{ margin: 5px 0 0 0; font-size: 20px; border: none; padding: 0; opacity: 0.9; color: white; }}
-            .confidential-tag {{ position: absolute; top: 15px; right: 20px; font-size: 11px; font-weight: bold; color: rgba(255,255,255,0.8); }}
-            
-            .notice-box {{ border-left: 4px solid #002366; padding: 15px 20px; background: #f0f4fa; margin-bottom: 30px; font-size: 14px; line-height: 1.5; }}
-            .legal-footer {{ margin-top: 60px; padding-top: 20px; border-top: 1px solid #ddd; font-size: 11px; color: #666; line-height: 1.5; text-align: justify; }}
-            
-            .category-block {{ border-collapse: collapse; width: 1100px; table-layout: fixed; border: none; }}
-            .title-cell {{ font-size: 20px; font-weight: bold; color: #2c3e50; padding-bottom: 10px; white-space: nowrap; border: none; }}
-            .table-cell {{ width: 350px; vertical-align: top; border: none; padding-top: 5px; }}
-            .chart-cell {{ width: 800px; vertical-align: top; border: none; }}
-            .perf-table {{ width: 320px; border-collapse: collapse; font-size: 13px; line-height: 1.4; }}
-            .perf-table th, .perf-table td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
-            .perf-table th {{ background: #f8f9fa; }}
-            
-            h2 {{ font-size: 22px; border-bottom: 2px solid #eee; padding-bottom: 5px; margin-top: 40px; }}
-            p, ul {{ margin-bottom: 15px; }}
-        </style>
+        {utils_report_css.get_report_css()}
     </head>
     <body>
-        <div class="header-ribbon">
-            <div class="confidential-tag">Private and Confidential. Not for circulation.</div>
-            <h1>Macro-Technical Momentum (MTM) Trading</h1>
-            <h2>ETF Trend Analysis {report_date}</h2>
-        </div>
-
-        <div class="notice-box">
-            <strong>NOTICE TO RECIPIENT:</strong> This proprietary document is provided on a confidential basis for informational purposes only. The sender is not liable for any actions or financial decisions taken based on this data. 
-            <br><br> <strong>Please refer to the LEGAL DISCLOSURE at the bottom of this article first before proceeding with the rest of the report.</strong> Reproduction or redistribution of this report in any form is strictly prohibited.
-        </div>
+        {utils_report_css.get_header_ribbon_html("Macro-Technical Momentum (MTM) Trading", f"ETF Trend Analysis {report_date}")}
+        {utils_disclaimer.get_notice_box_html()}
 
         <h2>Report Description</h2>
         <p>This ETF Trend Analysis report shows the % performance of each ETF in last 5, 10, 20, 40, 65 trading days, excluding weekends and US market holidays, but including half trading days. The report is an important component of the MTM trading process (see more details in <a href="https://docs.google.com/spreadsheets/d/1zirkorAxJs5_y9oV-Q6e-3c4Kr-iO8UsfA3CQwQy6OE">GSheet</a>), and it highlights which ETFs are over or under performing and for how long.</p>
@@ -202,25 +175,7 @@ def generate_visual_report(df_all):
         <h2>Data Visualisation</h2>
         {sections_html}
 
-        <div class="legal-footer">
-            <strong>I. Confidentiality and Non-Disclosure</strong><br>
-            This report is strictly confidential. It is intended solely for the person or entity to whom it was originally addressed. The contents of this document may not be reproduced, redistributed, or circulated, in whole or in part, to any other person or published on any website or social media platform without the express written consent of the author. Any unauthorized use or disclosure of this information is strictly prohibited.
-            <br><br>
-            
-            <strong>II. Not Financial Advice</strong><br>
-            This report is provided for informational and educational purposes only and does not constitute a "buy" or "sell" recommendation, nor does it represent an offer to provide investment advisory services. The analysis contained herein is "top-down" and "macro-tactical" in nature and does not take into account the specific investment objectives, financial situation, or particular needs of any individual recipient. No part of this report should be construed as legal, tax, or investment advice.
-            <br><br>
-            
-            <strong>III. Risk Disclosure</strong><br>
-            Investing in securities—including ETFs and individual stocks—involves significant risk of loss. Market conditions can change rapidly based on Federal Reserve policy, economic data, and shifting sector momentum. Past performance is not indicative of future results. No representation or warranty, express or implied, is made as to the accuracy or completeness of the information contained herein, and the author shall not be held liable for any investment losses or damages resulting from the use of this data.
-            <br><br>
-            
-            <strong>IV. Independent Verification</strong><br>
-            Recipients are urged to conduct their own independent research and consult with a licensed financial professional or investment advisor before making any financial decisions. The author may hold positions in the securities or sectors mentioned in this report and is under no obligation to update this information as market conditions evolve.
-            <br><br>
-            
-            <em>Data provided via Polygon.io. Generated in Singapore Standard Time (SGT).</em>
-        </div>
+        {utils_disclaimer.get_legal_footer_html()}
     </body>
     </html>
     """
@@ -229,7 +184,7 @@ def generate_visual_report(df_all):
     output_folder = current_dir / "mg_picks_trend_analysis"
     output_folder.mkdir(parents=True, exist_ok=True)
     today_str = (datetime.now() - timedelta(days=1)).strftime('%Y%m%d')
-    file_path = output_folder / f"data_viz_mg_picks_etf_trend_analysis_daily_{today_str}.html"
+    file_path = output_folder / f"etf_trend_analysis_daily_{today_str}.html"
 
     with open(str(file_path), "w", encoding="utf-8") as f:
         f.write(html_template)
