@@ -8,11 +8,11 @@ def get_notice_box_html():
         <strong>Please refer to the LEGAL DISCLOSURE at the bottom of this article first before proceeding with the rest of the report.</strong> Reproduction or redistribution of this report in any form is strictly prohibited.
     </div>
     """
-    
+
 def get_legal_footer_html():
     return """
     <div class="legal-footer">
-        <div style="font-size: 16px; font-weight: bold; color: #002366; border-bottom: 1px solid #ddd; padding-bottom: 5px; margin-bottom: 15px; text-transform: uppercase;">
+        <div style="font-size: 13px; font-weight: bold; color: #000000; border-bottom: 1px solid #ddd; padding-bottom: 5px; margin-bottom: 15px; text-transform: uppercase;">
             Legal Disclosure & Limitation of Liability
         </div>
         

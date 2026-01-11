@@ -12,7 +12,7 @@ def get_report_css():
         .confidential-tag { position: absolute; top: 15px; right: 20px; font-size: 11px; font-weight: bold; color: rgba(255,255,255,0.8); }
         
         .notice-box { border-left: 4px solid #002366; padding: 15px 20px; background: #f0f4fa; margin-bottom: 30px; font-size: 14px; line-height: 1.5; }
-        .legal-footer { margin-top: 60px; padding-top: 20px; border-top: 1px solid #ddd; font-size: 11px; color: #666; line-height: 1.5; text-align: justify; }
+        .legal-footer { margin-top: 60px; padding-top: 20px; font-size: 11px; color: #666; line-height: 1.5; text-align: justify; }
         
         .category-block { border-collapse: collapse; width: 1100px; table-layout: fixed; border: none; }
         .title-cell { font-size: 20px; font-weight: bold; color: #2c3e50; padding-bottom: 10px; white-space: nowrap; border: none; }
