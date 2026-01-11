@@ -71,108 +71,178 @@ def calculate_aligned_returns(df_ohlc, ticker, category, ref_days):
 
 
 # ==========================================
-# VISUALIZATION (2-COLUMN GRID)
+# VISUALIZATION
 # ==========================================
 
 def generate_visual_report(df_all):
+    # Standardize categories and fetch unique reference days
     categories = [c for c in TARGET_CATEGORIES if c in df_all['category'].unique()]
     ref_days = sorted(df_all['ref_day'].unique())
+    report_date = datetime.now().strftime('%Y-%m-%d')
 
-    # Total subplots = Ref Days * Categories (e.g., 6 * 4 = 24)
-    # With 2 columns, we need (Total / 2) rows
-    total_plots = len(ref_days) * len(categories)
-    num_cols = 2
-    num_rows = (total_plots + 1) // num_cols
+    # 1. Fixed Color Map for Ticker Consistency
+    all_tickers = sorted(df_all['ticker'].unique())
+    colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
+    color_map = {ticker: colors[i % len(colors)] for i, ticker in enumerate(all_tickers)}
 
-    # Generate sub-titles for each plot
-    titles = []
+    cat_summary = {
+        'General Market': ", ".join(sorted(df_all[df_all['category'] == 'General ETF']['ticker'].unique())),
+        'Sectors': ", ".join(sorted(df_all[df_all['category'] == 'Sector ETF']['ticker'].unique())),
+        'Sub-sectors': ", ".join(sorted(df_all[df_all['category'] == 'Sub-sector ETF']['ticker'].unique())),
+        'Commodities': ", ".join(sorted(df_all[df_all['category'] == 'Commodities']['ticker'].unique()))
+    }
+    
+    sections_html = ""
     for rd in ref_days:
         for cat in categories:
-            titles.append(f"Ref Day {rd} | {cat}")
-
-    fig = make_subplots(
-        rows=num_rows,
-        cols=num_cols,
-        subplot_titles=titles,
-        vertical_spacing=0.02,
-        # Increase this value (e.g., from 0.05 to 0.1 or 0.12) to add more horizontal gap
-        horizontal_spacing=0.12,
-        # Optional: Add specific column widths if you want to force more space in the middle
-        column_widths=[0.45, 0.45]
-    )
-
-    plot_idx = 0
-    for rd in ref_days:
-        for cat in categories:
-            curr_row = (plot_idx // num_cols) + 1
-            curr_col = (plot_idx % num_cols) + 1
-
+            display_cat = cat.replace("General ETF", "General Market ETFs")\
+                             .replace("Sector ETF", "Sector ETFs")\
+                             .replace("Sub-sector ETF", "Sub-sector ETFs")\
+                             .replace("Commodities", "Commodity ETFs")
+            
             mask = (df_all['ref_day'] == rd) & (df_all['category'] == cat)
             sub_df = df_all[mask]
+            tickers = sorted(sub_df['ticker'].unique())
 
-            tickers = sub_df['ticker'].unique()
+            fig = go.Figure()
+            latest_stats = []
+
             for tkr in tickers:
                 tkr_df = sub_df[sub_df['ticker'] == tkr].sort_values('day_seq', ascending=False)
+                perf_val = tkr_df[tkr_df['day_seq'] == 0]['pct_diff'].values[0] if not tkr_df.empty else 0
+                latest_stats.append({'Ticker': tkr, 'Perf': f"{perf_val:+.2%}"})
 
-                fig.add_trace(
-                    go.Scatter(
-                        x=tkr_df['day_seq'],
-                        y=tkr_df['pct_diff'],
-                        mode='lines',
-                        name=tkr,
-                        line=dict(width=1.5),
-                        hovertemplate=f"<b>{tkr}</b><br>Day: %{{x}}<br>Return: %{{y:.2%}}<extra></extra>"
-                    ),
-                    row=curr_row, col=curr_col
-                )
+                fig.add_trace(go.Scatter(
+                    x=tkr_df['day_seq'], y=tkr_df['pct_diff'],
+                    mode='lines', name=tkr,
+                    line=dict(width=2, color=color_map[tkr]),
+                    showlegend=False,
+                    hovertemplate=f"<b>{tkr}</b><br>Day: %{{x}}<br>Return: %{{y:.2%}}<extra></extra>"
+                ))
 
-            # Label axes for every subplot
-            fig.update_xaxes(title_text="Days Ago", row=curr_row, col=curr_col, autorange="reversed", showgrid=True)
-            fig.update_yaxes(title_text="% Diff", row=curr_row, col=curr_col, tickformat=".1%", showgrid=True)
+            # Applied requested wide dimensions
+            fig.update_layout(
+                height=450, width=800, margin=dict(t=10, b=40, l=0, r=0),
+                template="plotly_white", hovermode="closest",
+                hoverlabel=dict(font_size=12, font_family="Arial", font_color="white"),
+                xaxis=dict(autorange="reversed", title="Trading days ago", showgrid=True),
+                yaxis=dict(tickformat=".1%", title="% performance", showgrid=True)
+            )
+            
+            chart_html = fig.to_html(full_html=False, include_plotlyjs='cdn' if sections_html == "" else False)
+            table_rows = "".join([f"<tr><td>{s['Ticker']}</td><td>{s['Perf']}</td></tr>" for s in latest_stats])
 
-            plot_idx += 1
+            sections_html += f"""
+            <table class="category-block">
+                <tr><td colspan="2" class="title-cell">{display_cat} (since {rd} trading days ago)</td></tr>
+                <tr>
+                    <td class="table-cell">
+                        <table class="perf-table">
+                            <thead><tr><th>Ticker</th><th>% performance</th></tr></thead>
+                            <tbody>{table_rows}</tbody>
+                        </table>
+                    </td>
+                    <td class="chart-cell">{chart_html}</td>
+                </tr>
+            </table>
+            <div style="height: 40px;"></div>
+            """
 
-    fig.update_layout(
-        height=num_rows * 350,
-        width=1400,
-        title_text="<b>ETF Trend Analysis</b>",
-        template="plotly_white",
-        showlegend=False,
-        margin=dict(t=100, b=50, l=80, r=50)
-    )
+    html_template = f"""
+    <html>
+    <head>
+        <style>
+            body {{ font-family: Arial, sans-serif; margin: 0; padding: 40px; color: #333; line-height: 1.8; }}
+            
+            /* Navy Blue Ribbon Headers */
+            .header-ribbon {{ background-color: #002366; color: white; padding: 30px 40px; margin: -40px -40px 30px -40px; position: relative; }}
+            .header-ribbon h1 {{ margin: 0; font-size: 28px; font-weight: bold; }}
+            .header-ribbon h2 {{ margin: 5px 0 0 0; font-size: 20px; border: none; padding: 0; opacity: 0.9; color: white; }}
+            .confidential-tag {{ position: absolute; top: 15px; right: 20px; font-size: 11px; font-weight: bold; color: rgba(255,255,255,0.8); }}
+            
+            .notice-box {{ border-left: 4px solid #002366; padding: 15px 20px; background: #f0f4fa; margin-bottom: 30px; font-size: 14px; line-height: 1.5; }}
+            .legal-footer {{ margin-top: 60px; padding-top: 20px; border-top: 1px solid #ddd; font-size: 11px; color: #666; line-height: 1.5; text-align: justify; }}
+            
+            .category-block {{ border-collapse: collapse; width: 1100px; table-layout: fixed; border: none; }}
+            .title-cell {{ font-size: 20px; font-weight: bold; color: #2c3e50; padding-bottom: 10px; white-space: nowrap; border: none; }}
+            .table-cell {{ width: 350px; vertical-align: top; border: none; padding-top: 5px; }}
+            .chart-cell {{ width: 800px; vertical-align: top; border: none; }}
+            .perf-table {{ width: 320px; border-collapse: collapse; font-size: 13px; line-height: 1.4; }}
+            .perf-table th, .perf-table td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
+            .perf-table th {{ background: #f8f9fa; }}
+            
+            h2 {{ font-size: 22px; border-bottom: 2px solid #eee; padding-bottom: 5px; margin-top: 40px; }}
+            p, ul {{ margin-bottom: 15px; }}
+        </style>
+    </head>
+    <body>
+        <div class="header-ribbon">
+            <div class="confidential-tag">Private and Confidential. Not for circulation.</div>
+            <h1>Macro-Technical Momentum (MTM) Trading</h1>
+            <h2>ETF Trend Analysis {report_date}</h2>
+        </div>
 
-    # 1. Define and create the output directory
+        <div class="notice-box">
+            <strong>NOTICE TO RECIPIENT:</strong> This proprietary document is provided on a confidential basis for informational purposes only. The sender is not liable for any actions or financial decisions taken based on this data. 
+            <br><br> <strong>Please refer to the LEGAL DISCLOSURE at the bottom of this article first before proceeding with the rest of the report.</strong> Reproduction or redistribution of this report in any form is strictly prohibited.
+        </div>
+
+        <h2>Report Description</h2>
+        <p>This ETF Trend Analysis report shows the % performance of each ETF in last 5, 10, 20, 40, 65 trading days, excluding weekends and US market holidays, but including half trading days. The report is an important component of the MTM trading process (see more details in <a href="https://docs.google.com/spreadsheets/d/1zirkorAxJs5_y9oV-Q6e-3c4Kr-iO8UsfA3CQwQy6OE">GSheet</a>), and it highlights which ETFs are over or under performing and for how long.</p>
+        <p>The ETFs are carefully curated based on the author's investment scope and focus. They are consolidated accordingly to each of the 4 groups, General Market, Sectors, Sub-sectors and Commodities, so that they can be compared against one another within each group.</p>
+        <ul>
+            <li><strong>General Market:</strong> {cat_summary['General Market']}</li>
+            <li><strong>Sectors:</strong> {cat_summary['Sectors']}</li>
+            <li><strong>Sub-sectors:</strong> {cat_summary['Sub-sectors']}</li>
+            <li><strong>Commodities:</strong> {cat_summary['Commodities']}</li>
+        </ul>
+        <p>The report is generated every Tue-Sat afternoons (Singapore time).</p>
+        <p>Data source: polygon.io</p>
+
+        <h2>Data Visualisation</h2>
+        {sections_html}
+
+        <div class="legal-footer">
+            <strong>I. Confidentiality and Non-Disclosure</strong><br>
+            This report is strictly confidential. It is intended solely for the person or entity to whom it was originally addressed. The contents of this document may not be reproduced, redistributed, or circulated, in whole or in part, to any other person or published on any website or social media platform without the express written consent of the author. Any unauthorized use or disclosure of this information is strictly prohibited.
+            <br><br>
+            
+            <strong>II. Not Financial Advice</strong><br>
+            This report is provided for informational and educational purposes only and does not constitute a "buy" or "sell" recommendation, nor does it represent an offer to provide investment advisory services. The analysis contained herein is "top-down" and "macro-tactical" in nature and does not take into account the specific investment objectives, financial situation, or particular needs of any individual recipient. No part of this report should be construed as legal, tax, or investment advice.
+            <br><br>
+            
+            <strong>III. Risk Disclosure</strong><br>
+            Investing in securities—including ETFs and individual stocks—involves significant risk of loss. Market conditions can change rapidly based on Federal Reserve policy, economic data, and shifting sector momentum. Past performance is not indicative of future results. No representation or warranty, express or implied, is made as to the accuracy or completeness of the information contained herein, and the author shall not be held liable for any investment losses or damages resulting from the use of this data.
+            <br><br>
+            
+            <strong>IV. Independent Verification</strong><br>
+            Recipients are urged to conduct their own independent research and consult with a licensed financial professional or investment advisor before making any financial decisions. The author may hold positions in the securities or sectors mentioned in this report and is under no obligation to update this information as market conditions evolve.
+            <br><br>
+            
+            <em>Data provided via Polygon.io. Generated in Singapore Standard Time (SGT).</em>
+        </div>
+    </body>
+    </html>
+    """
+
+    # --- File Saving & Email ---
     output_folder = current_dir / "mg_picks_trend_analysis"
     output_folder.mkdir(parents=True, exist_ok=True)
-
-    # 2. Save the file into that folder
-    
     today_str = (datetime.now() - timedelta(days=1)).strftime('%Y%m%d')
     file_path = output_folder / f"data_viz_mg_picks_etf_trend_analysis_daily_{today_str}.html"
 
-    fig.write_html(str(file_path))
-    print(f"Interactive report saved: {file_path}")
-    # fig.show() is removed/commented out for automated runs
-
-    # 1. Fetch the list of recipients (from Secret or local file)
-    RECIPIENTS = utils_email_handler.get_receiver_emails()
+    with open(str(file_path), "w", encoding="utf-8") as f:
+        f.write(html_template)
     
-    if not RECIPIENTS:
-        print("No recipients found. Skipping email.")
-    else:
-        report_date = datetime.now().strftime('%Y-%m-%d')
-        EMAIL_SUBJECT = f"ETF trend analysis report {report_date}"
-        EMAIL_CONTENT = f"Hello. Please find the attached report on ETF trend analysis, generated on {report_date}."
-        TARGET_EMAIL = "francis.lunkai.wong@gmail.com"
-
+    RECIPIENTS = utils_email_handler.get_receiver_emails()
+    if RECIPIENTS:
         utils_email_handler.send_report_email(
             receiver_list=RECIPIENTS,
             file_path=str(file_path),
-            sender_email=TARGET_EMAIL,  # Usually same as receiver for personal reports
-            subject=EMAIL_SUBJECT,
-            body=EMAIL_CONTENT
+            sender_email="francis.lunkai.wong@gmail.com",
+            subject=f"ETF trend analysis report {report_date}",
+            body=f"Hello. Please find the attached report on ETF trend analysis, generated on {report_date}."
         )
-
 
 # ==========================================
 # MAIN EXECUTION
