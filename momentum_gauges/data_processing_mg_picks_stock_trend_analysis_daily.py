@@ -168,8 +168,11 @@ def generate_visual_report(df_all):
     
     output_folder = current_dir / "mg_picks_trend_analysis"
     output_folder.mkdir(parents=True, exist_ok=True)
-    file_path = output_folder / f"stock_trend_analysis_daily_{datetime.now().strftime('%Y%m%d')}.html"
-    with open(str(file_path), "w", encoding="utf-8") as f: f.write(html_template)
+    today_str = (datetime.now() - timedelta(days=1)).strftime('%Y%m%d')
+    file_path = output_folder / f"stock_trend_analysis_daily_{today_str}.html"
+
+    with open(str(file_path), "w", encoding="utf-8") as f: 
+        f.write(html_template)
     
     RECIPIENTS = utils_email_handler.get_receiver_emails()
     if RECIPIENTS:
