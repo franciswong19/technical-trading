@@ -29,7 +29,8 @@ LOOKBACK = 150
 MULTIPLIER = 1
 TIMESPAN = "day"
 
-TARGET_CATEGORIES = ["General ETF", "Sector ETF", "Sub-sector ETF", "Commodities"]
+TARGET_CATEGORIES = ["General ETF", "Sector ETF", "Sub-sector ETF", 
+                    "Technology ETF","Healthcare ETF","Finance ETF","Materials ETF","Commodities"]
 REF_DAYS = [5, 10, 20, 40, 65]
 
 
@@ -90,6 +91,10 @@ def generate_visual_report(df_all):
         'General Market': ", ".join(sorted(df_all[df_all['category'] == 'General ETF']['ticker'].unique())),
         'Sectors': ", ".join(sorted(df_all[df_all['category'] == 'Sector ETF']['ticker'].unique())),
         'Sub-sectors': ", ".join(sorted(df_all[df_all['category'] == 'Sub-sector ETF']['ticker'].unique())),
+        'Technology Sector': ", ".join(sorted(df_all[df_all['category'] == 'Technology ETF']['ticker'].unique())),
+        'Healthcare Sector': ", ".join(sorted(df_all[df_all['category'] == 'Healthcare ETF']['ticker'].unique())),
+        'Finance Sector': ", ".join(sorted(df_all[df_all['category'] == 'Finance ETF']['ticker'].unique())),
+        'Materials Sector': ", ".join(sorted(df_all[df_all['category'] == 'Materials ETF']['ticker'].unique())),
         'Commodities': ", ".join(sorted(df_all[df_all['category'] == 'Commodities']['ticker'].unique()))
     }
     
@@ -99,7 +104,11 @@ def generate_visual_report(df_all):
             display_cat = cat.replace("General ETF", "General Market ETFs")\
                              .replace("Sector ETF", "Sector ETFs")\
                              .replace("Sub-sector ETF", "Sub-sector ETFs")\
-                             .replace("Commodities", "Commodity ETFs")
+                             .replace("Technology ETF", "Technology ETFs")\
+                             .replace("Healthcare ETF", "Healthcare ETFs")\
+                             .replace("Finance ETF", "Finance ETFs")\
+                             .replace("Materials ETF", "Materials ETFs")\
+                             .replace("Commodities", "Commodities ETFs")
             
             mask = (df_all['ref_day'] == rd) & (df_all['category'] == cat)
             sub_df = df_all[mask]
@@ -162,11 +171,15 @@ def generate_visual_report(df_all):
 
         <h2>Report Description</h2>
         <p>This ETF Trend Analysis report shows the % performance of each ETF in last 5, 10, 20, 40, 65 trading days, excluding weekends and US market holidays, but including half trading days. The report is an important component of the MTM trading process (see more details in <a href="https://docs.google.com/spreadsheets/d/1zirkorAxJs5_y9oV-Q6e-3c4Kr-iO8UsfA3CQwQy6OE">GSheet</a>), and it highlights which ETFs are over or under performing and for how long.</p>
-        <p>The ETFs are carefully curated based on the author's investment scope and focus. They are consolidated accordingly to each of the 4 groups, General Market, Sectors, Sub-sectors and Commodities, so that they can be compared against one another within each group.</p>
+        <p>The ETFs are carefully curated based on the author's investment scope and focus. They are consolidated accordingly to the following groups below, so that they can be compared against one another within each group. Note that a particular ETF can be represented in more than 1 group.</p>
         <ul>
             <li><strong>General Market:</strong> {cat_summary['General Market']}</li>
             <li><strong>Sectors:</strong> {cat_summary['Sectors']}</li>
             <li><strong>Sub-sectors:</strong> {cat_summary['Sub-sectors']}</li>
+            <li><strong>Technology Sector:</strong> {cat_summary['Technology Sector']}</li>
+            <li><strong>Healthcare Sector:</strong> {cat_summary['Healthcare Sector']}</li>
+            <li><strong>Finance Sector:</strong> {cat_summary['Finance Sector']}</li>
+            <li><strong>Materials Sector:</strong> {cat_summary['Materials Sector']}</li>
             <li><strong>Commodities:</strong> {cat_summary['Commodities']}</li>
         </ul>
         <p>The report is generated every Tue-Sat afternoons (Singapore time).</p>
