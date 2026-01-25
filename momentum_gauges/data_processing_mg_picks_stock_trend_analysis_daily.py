@@ -30,7 +30,7 @@ MULTIPLIER = 1
 TIMESPAN = "day"
 
 TARGET_CATEGORIES = ["Semicon", "Software", "Comm Svc", "Healthcare", "Finance", 
-                    "Consumer Discretionary", "Alternative Energy", "Alternative Investments"]
+                    "Consumer Discretionary", "Alternative Energy & Industrials", "Alternative Investments"]
 
 REF_DAYS = [5, 10, 20, 40, 65]
 
