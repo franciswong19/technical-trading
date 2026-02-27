@@ -418,6 +418,7 @@ class IBKRClient:
         Raises:
             OrderRejectedError: If order is rejected
         """
+        order.account = self.account_id
         trade = self.ib.placeOrder(contract, order)
         self.ib.sleep(2)  # Allow status to propagate
 
