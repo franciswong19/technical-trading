@@ -11,8 +11,8 @@ import os
 # IBKR CONNECTION
 # ==========================================
 IBKR_HOST = '127.0.0.1'
-LIVE_PORT = 7496
-PAPER_PORT = 7497
+LIVE_PORT = 4001   # IB Gateway live (TWS live would be 7496)
+PAPER_PORT = 4002  # IB Gateway paper (TWS paper would be 7497)
 
 # Client IDs: use 10-19 range to avoid conflicts with existing scripts (which use 1, 2, 9)
 BASE_CLIENT_ID = 10
