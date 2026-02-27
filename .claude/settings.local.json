@@ -6,7 +6,8 @@
       "Bash(dir:*)",
       "Bash(rm:*)",
       "Bash(python:*)",
-      "Bash(netstat:*)"
+      "Bash(netstat:*)",
+      "Bash(python3:*)"
     ]
   }
 }
