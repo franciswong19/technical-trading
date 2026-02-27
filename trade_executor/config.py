@@ -101,7 +101,7 @@ EXCHANGES = {
         'calendar': 'XAMS',  # MIC code for Amsterdam (AEB); XPAR for Paris, XMIL for Milan
         'cutoff_minutes_before_close': 15,  # 5:15 PM CET (Euronext closes 5:30 PM)
         'currency': 'EUR',
-        'ibkr_exchange': 'AEB',  # Amsterdam; use 'SBF' for Paris, 'BVME' for Milan, etc.
+        'ibkr_exchange': 'SMART',  # SMART routing avoids direct-route precautionary restriction; routes to AEB for Amsterdam stocks
         'native_midprice': False,  # PEG MID not supported on AEB/Euronext; use limit at (bid+ask)/2
     },
 }
