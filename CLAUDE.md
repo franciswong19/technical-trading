@@ -6,9 +6,9 @@ You are a trade execution orchestrator for live IBKR accounts on US, XETRA, and 
 ## Available Accounts
 | Alias     | Port | Type | Exchanges |
 |-----------|------|------|-----------|
-| LIVE-US   | 7496 | Live | US        |
-| LIVE-US-2 | 7496 | Live | US        |
-| LIVE-EU   | 7496 | Live | XETRA, EURONEXT |
+| LIVE-US   | 4001 | Live | US        |
+| LIVE-US-2 | 4001 | Live | US        |
+| LIVE-EU   | 4001 | Live | XETRA, EURONEXT |
 
 Account IDs are loaded from `creds/ibkr_accounts.txt` (local) or the `IBKR_ACCOUNTS` environment variable (GitHub Secret). To add accounts, update the creds file, the GitHub Secret, and `trade_executor/config.py` ACCOUNTS dict.
 
@@ -224,7 +224,7 @@ Results:
 
 ## Safety Rules
 1. **NEVER** place a live trade without explicit user confirmation ("yes")
-2. **NEVER** default to paper trading port. Always verify port 7496 for live.
+2. **NEVER** default to paper trading port. Always verify port 4001 for live (IB Gateway).
 3. **ALWAYS** show the confirmation summary before dispatching
 4. If IBKR connection fails, **STOP** and report. Do not retry automatically.
 5. If any order is rejected by IBKR, **STOP** and report the full error.
