@@ -17,6 +17,7 @@ import argparse
 import sys
 import os
 import time
+import json
 from datetime import datetime, timedelta
 
 import pytz
@@ -29,11 +30,28 @@ from trade_executor.config import (
     DURATION_TIMED, DEFAULT_CYCLE_THRESHOLD, STOP_LOSS_DELAY,
 )
 from trade_executor.models.request import TradeRequest
-from trade_executor.models.execution_result import ExecutionResult, AccountResult, TickerResult, stamp_ticker_completion
+from trade_executor.models.execution_result import ExecutionResult, AccountResult, TickerResult, stamp_ticker_fill, stamp_ticker_completion
 from trade_executor.ibkr_client import IBKRClient, IBKRConnectionError, OrderRejectedError
 from trade_executor.quantity_calculator import calculate_buy_qty, calculate_sell_qty, InsufficientCashError
 from trade_executor.order_monitor import OrderMonitor
 from trade_executor.stop_loss_manager import StopLossManager
+
+
+def _write_fill_notification(request_id: str, ticker_result, seq_num: int, status_dir: str) -> None:
+    """Write a per-cycle fill notification file to STATUS_DIR."""
+    path = os.path.join(status_dir, f"{request_id}-{ticker_result.ticker}-cycle{seq_num}.filled.json")
+    data = {
+        'ticker': ticker_result.ticker,
+        'action': ticker_result.action,
+        'seq_num': seq_num,
+        'filled_qty': ticker_result.filled_qty,
+        'avg_fill_price': ticker_result.avg_fill_price,
+        'filled_at_local': ticker_result.filled_at_local,
+        'filled_at_sgt': ticker_result.filled_at_sgt,
+    }
+    with open(path, 'w') as f:
+        json.dump(data, f, indent=2)
+    print(f"[HotPotato] Fill notification written: {path}")
 
 
 def execute(request: TradeRequest) -> ExecutionResult:
@@ -188,8 +206,10 @@ def execute(request: TradeRequest) -> ExecutionResult:
                     filled_qty = client.get_filled_qty(mon_result['trade'])
                     ticker_result.filled_qty = filled_qty
                     ticker_result.avg_fill_price = fill_price
-                    print(f"[HotPotato] Cycle {seq_num}: {ticker} {request.transaction_type} "
-                          f"filled {filled_qty} @ ${fill_price:.2f}")
+                    stamp_ticker_fill(ticker_result, tz)
+                    print(f"[HotPotato] ORDER FILLED cycle {seq_num}: {ticker} {request.transaction_type} "
+                          f"{filled_qty} @ {fill_price:.4f}")
+                    _write_fill_notification(request.request_id, ticker_result, seq_num, STATUS_DIR)
 
                     # 15-min timer before placing stops
                     print(f"[HotPotato] Waiting {STOP_LOSS_DELAY}s before placing stops...")

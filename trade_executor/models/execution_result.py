@@ -15,8 +15,15 @@ import pytz
 SGT = pytz.timezone('Asia/Singapore')
 
 
+def stamp_ticker_fill(ticker_result: 'TickerResult', exchange_tz: pytz.BaseTzInfo) -> None:
+    """Set filled_at_local and filled_at_sgt on a TickerResult (called at moment of fill)."""
+    now = datetime.now(exchange_tz)
+    ticker_result.filled_at_local = now.isoformat()
+    ticker_result.filled_at_sgt = now.astimezone(SGT).isoformat()
+
+
 def stamp_ticker_completion(ticker_result: 'TickerResult', exchange_tz: pytz.BaseTzInfo) -> None:
-    """Set completed_at_local and completed_at_sgt on a TickerResult."""
+    """Set completed_at_local and completed_at_sgt on a TickerResult (called when fully done)."""
     now = datetime.now(exchange_tz)
     ticker_result.completed_at_local = now.isoformat()
     ticker_result.completed_at_sgt = now.astimezone(SGT).isoformat()
@@ -31,6 +38,8 @@ class TickerResult:
     target_qty: int = 0
     filled_qty: int = 0
     avg_fill_price: float = 0.0
+    filled_at_local: str = ''              # ISO timestamp at moment of fill (exchange local time)
+    filled_at_sgt: str = ''               # ISO timestamp at moment of fill (SGT)
     order_type_used: str = ''              # 'midprice' / 'market' / 'trailing_stop'
     escalated_to_market: bool = False
     stop_loss_placed: bool = False

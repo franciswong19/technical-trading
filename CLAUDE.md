@@ -217,20 +217,32 @@ Launch ALL in background simultaneously:
   python3 -m trade_executor.executors.<type> --request trade_executor/state/requests/<request_id>-<TICKER>.json --client-id-offset <offset>
   (one background process per ticker, all launched at the same time)
 
-As each process completes:
-  1. Read result: trade_executor/state/results/<request_id>-<TICKER>.json
-  2. Verify result:
-     - Status is COMPLETED (not PARTIAL or FAILED)
-     - filled_qty > 0
-     - For BUY: stop_loss_placed == true (flag HIGH PRIORITY WARNING if missing)
-  3. Report per-ticker result to the user immediately:
-     [TICKER]: [action] [filled_qty] @ $[avg_fill_price]
-               Order: [order_type_used], Escalated: [yes/no]
-               Stop Loss: $[stop_loss_price] ([stop_type]) (if BUY)
-               Completed: [completed_at_local] (local) / [completed_at_sgt] (SGT)
-               Status: [COMPLETED/PARTIAL/FAILED]
-  4. Book-keep:
-     python3 -m trade_executor.trade_recorder --result trade_executor/state/results/<request_id>-<TICKER>.json
+After launching, enter a poll loop (every 30s) until all processes complete:
+
+  A. Check for fill notifications (BUY requests only — report each ticker once):
+     Fill file: trade_executor/state/status/<request_id>-<TICKER>.filled.json
+     When found, report to user immediately:
+       [TICKER]: BUY FILLED — [filled_qty] @ $[avg_fill_price]
+                 Filled: [filled_at_sgt] (SGT)
+                 [Waiting for stop loss placement...]
+
+  B. Check for process completion (TaskOutput block=false):
+     When a process completes:
+       1. Read result: trade_executor/state/results/<request_id>.json
+       2. Verify:
+          - Status is COMPLETED (not PARTIAL or FAILED)
+          - filled_qty > 0
+          - For BUY: stop_loss_placed == true (flag HIGH PRIORITY WARNING if missing)
+       3. Report final per-ticker result:
+          [TICKER]: [action] [filled_qty] @ $[avg_fill_price]
+                    Order: [order_type_used], Escalated: [yes/no]
+                    Stop Loss: $[stop_loss_price] ([stop_type]) (if BUY)
+                    Filled: [filled_at_local] (local) / [filled_at_sgt] (SGT)
+                    Status: [COMPLETED/PARTIAL/FAILED]
+       4. Book-keep:
+          python3 -m trade_executor.trade_recorder --result trade_executor/state/results/<request_id>.json
+
+  C. If all processes completed: exit poll loop. Else: sleep 30s, repeat.
 ```
 If any ticker executor crashes without a result file, report **CRITICAL ALERT** for that ticker and continue to the next.
 
@@ -258,7 +270,7 @@ Results:
     [TICKER]: [action] [filled_qty] @ $[avg_fill_price]
               Order: [order_type_used], Escalated: [yes/no]
               Stop Loss: $[stop_loss_price] ([stop_type])
-              Completed: [completed_at_local] (local) / [completed_at_sgt] (SGT)
+              Filled: [filled_at_local] (local) / [filled_at_sgt] (SGT)
               Book-keeping: [Recorded / FAILED]
   ...
 ==================
