@@ -13,6 +13,7 @@ import argparse
 import sys
 import os
 import time
+import json
 from datetime import datetime
 
 import pytz
@@ -24,11 +25,27 @@ from trade_executor.config import (
     NORMAL_CHECK_INTERVAL, DURATION_BEFORE_CLOSE, STOP_LOSS_DELAY,
 )
 from trade_executor.models.request import TradeRequest
-from trade_executor.models.execution_result import ExecutionResult, AccountResult, TickerResult, stamp_ticker_completion
+from trade_executor.models.execution_result import ExecutionResult, AccountResult, TickerResult, stamp_ticker_fill, stamp_ticker_completion
 from trade_executor.ibkr_client import IBKRClient, IBKRConnectionError, OrderRejectedError
 from trade_executor.quantity_calculator import calculate_buy_qty, InsufficientCashError
 from trade_executor.order_monitor import OrderMonitor
 from trade_executor.stop_loss_manager import StopLossManager
+
+
+def _write_fill_notification(request_id: str, ticker_result, status_dir: str) -> None:
+    """Write a fill notification file to STATUS_DIR so the agent can report the fill immediately."""
+    path = os.path.join(status_dir, f"{request_id}-{ticker_result.ticker}.filled.json")
+    data = {
+        'ticker': ticker_result.ticker,
+        'action': ticker_result.action,
+        'filled_qty': ticker_result.filled_qty,
+        'avg_fill_price': ticker_result.avg_fill_price,
+        'filled_at_local': ticker_result.filled_at_local,
+        'filled_at_sgt': ticker_result.filled_at_sgt,
+    }
+    with open(path, 'w') as f:
+        json.dump(data, f, indent=2)
+    print(f"[NormalBuy] Fill notification written: {path}")
 
 
 def execute(request: TradeRequest, client_id_offset: int = 0) -> ExecutionResult:
@@ -123,7 +140,9 @@ def execute(request: TradeRequest, client_id_offset: int = 0) -> ExecutionResult
                         filled_qty = client.get_filled_qty(mon_result['trade'])
                         ticker_result.filled_qty = filled_qty
                         ticker_result.avg_fill_price = fill_price
-                        print(f"[NormalBuy] {ticker} filled: {filled_qty} @ ${fill_price:.2f}")
+                        stamp_ticker_fill(ticker_result, tz)
+                        print(f"[NormalBuy] ORDER FILLED: {ticker} - {filled_qty} @ {fill_price:.4f}")
+                        _write_fill_notification(request.request_id, ticker_result, STATUS_DIR)
 
                         # Wait 15 min then place stop loss. Use ib.sleep() (not time.sleep())
                         # so the asyncio event loop stays alive and the connection is maintained.
@@ -159,6 +178,9 @@ def execute(request: TradeRequest, client_id_offset: int = 0) -> ExecutionResult
                                 filled_qty = client.get_filled_qty(market_trade)
                                 ticker_result.filled_qty = filled_qty
                                 ticker_result.avg_fill_price = fill_price
+                                stamp_ticker_fill(ticker_result, tz)
+                                print(f"[NormalBuy] ORDER FILLED (market escalation): {ticker} - {filled_qty} @ {fill_price:.4f}")
+                                _write_fill_notification(request.request_id, ticker_result, STATUS_DIR)
 
                                 print(f"[NormalBuy] Waiting {STOP_LOSS_DELAY}s before placing stop loss for {ticker}...")
                                 client.ib.sleep(STOP_LOSS_DELAY)

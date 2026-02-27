@@ -141,7 +141,6 @@ class IBKRClient:
                 result.append({
                     'symbol': pos.contract.symbol,
                     'position': int(pos.position),
-                    'market_price': pos.marketPrice if pos.marketPrice is not None else 0,
                     'contract': pos.contract,
                 })
         return result
