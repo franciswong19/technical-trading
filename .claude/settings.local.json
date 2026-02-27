@@ -14,7 +14,8 @@
       "Bash(/c/Users/franc/anaconda3/python.exe:*)",
       "Bash(tasklist:*)",
       "Bash(taskkill:*)",
-      "Bash(cmd:*)"
+      "Bash(cmd:*)",
+      "Bash(ls:*)"
     ]
   }
 }

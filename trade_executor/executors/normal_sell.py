@@ -66,6 +66,10 @@ def execute(request: TradeRequest, client_id_offset: int = 0) -> ExecutionResult
                     ticker_result.error = f"No shares to sell (holdings={holdings}, pct={tp.fulfillment_pct})"
                     account_result.ticker_results.append(ticker_result)
                 else:
+                    # Cancel any open orders for this ticker (e.g. stop-loss) before selling
+                    # to prevent IBKR from treating the combined sell orders as a short sale
+                    client.cancel_orders_for_ticker(ticker)
+
                     # Place initial order
                     if tp.initial_order_type == 'midprice':
                         trade = client.place_midprice_order(ticker, 'SELL', qty, request.exchange)

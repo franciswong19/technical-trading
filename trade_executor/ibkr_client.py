@@ -327,6 +327,29 @@ class IBKRClient:
             print(f"[IBKR] Cancelled {count} open orders for account {self.account_id}")
         return count
 
+    def cancel_orders_for_ticker(self, ticker: str) -> int:
+        """Cancel all open orders for a specific ticker.
+
+        Used before placing a sell order to avoid IBKR treating the combined
+        open sell orders (e.g. existing stop-loss + new sell) as a short sale.
+
+        Args:
+            ticker: Stock symbol
+
+        Returns:
+            int: Number of orders cancelled
+        """
+        open_trades = self.ib.openTrades()
+        cancelled = 0
+        for trade in open_trades:
+            if trade.contract.symbol == ticker:
+                self.ib.cancelOrder(trade.order)
+                cancelled += 1
+        if cancelled > 0:
+            self.ib.sleep(2)
+            print(f"[IBKR] Cancelled {cancelled} open order(s) for {ticker} before selling")
+        return cancelled
+
     def get_open_orders(self) -> list:
         """Get all open orders."""
         return self.ib.openOrders()
