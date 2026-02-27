@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep:*)",
+      "Bash(git -C \"C:\\\\Users\\\\franc\\\\Documents\\\\TechnicalTrading\" log --oneline -20)",
+      "Bash(dir:*)",
+      "Bash(rm:*)",
+      "Bash(python:*)"
+    ]
+  }
+}
