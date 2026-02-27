@@ -20,7 +20,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 from trade_executor.config import (
     BASE_CLIENT_ID, EXCHANGES, RESULTS_DIR, STATUS_DIR,
-    FAST_CHECK_INTERVAL, DURATION_TIMED,
+    FAST_CHECK_INTERVAL, DURATION_TIMED, STOP_LOSS_DELAY,
 )
 from trade_executor.models.request import TradeRequest
 from trade_executor.models.execution_result import ExecutionResult, AccountResult, TickerResult, stamp_ticker_completion
@@ -110,14 +110,14 @@ def execute(request: TradeRequest, client_id_offset: int = 0) -> ExecutionResult
                         ticker_result.filled_qty = filled_qty
                         ticker_result.avg_fill_price = fill_price
 
-                        stop_mgr.schedule_stop_loss(
+                        print(f"[FastBuy] Waiting {STOP_LOSS_DELAY}s before placing stop loss for {ticker}...")
+                        client.ib.sleep(STOP_LOSS_DELAY)
+                        stop_result = stop_mgr.place_stop_loss_now(
                             ticker, filled_qty, fill_price,
                             tp.stop_type, tp.stop_fixed_price,
                         )
-                        ticker_result.stop_loss_placed = True
-                        ticker_result.stop_loss_price = stop_mgr.calculate_stop_price(
-                            fill_price, tp.stop_type, tp.stop_fixed_price
-                        )
+                        ticker_result.stop_loss_placed = stop_result['success']
+                        ticker_result.stop_loss_price = stop_result['stop_price']
 
                     elif mon_result['deadline_reached']:
                         # 1 min before deadline: recalculate and market order
@@ -143,14 +143,14 @@ def execute(request: TradeRequest, client_id_offset: int = 0) -> ExecutionResult
                                 ticker_result.filled_qty = filled_qty
                                 ticker_result.avg_fill_price = fill_price
 
-                                stop_mgr.schedule_stop_loss(
+                                print(f"[FastBuy] Waiting {STOP_LOSS_DELAY}s before placing stop loss for {ticker}...")
+                                client.ib.sleep(STOP_LOSS_DELAY)
+                                stop_result = stop_mgr.place_stop_loss_now(
                                     ticker, filled_qty, fill_price,
                                     tp.stop_type, tp.stop_fixed_price,
                                 )
-                                ticker_result.stop_loss_placed = True
-                                ticker_result.stop_loss_price = stop_mgr.calculate_stop_price(
-                                    fill_price, tp.stop_type, tp.stop_fixed_price
-                                )
+                                ticker_result.stop_loss_placed = stop_result['success']
+                                ticker_result.stop_loss_price = stop_result['stop_price']
                             else:
                                 ticker_result.error = "Market order did not fill within 60s"
                                 result.errors.append(f"{account_id}/{ticker}: Market order timeout")

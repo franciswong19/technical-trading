@@ -181,13 +181,22 @@ class IBKRClient:
         contract = self._create_contract(ticker, exchange)
         self.ib.reqMarketDataType(1)  # Live data
         mkt_data = self.ib.reqMktData(contract, snapshot=True)
-        self.ib.sleep(2)
 
         price = None
-        if mkt_data.last and not math.isnan(mkt_data.last):
-            price = mkt_data.last
-        elif mkt_data.close and not math.isnan(mkt_data.close):
-            price = mkt_data.close
+        for _ in range(3):  # Retry up to 3 times (some exchanges are slower to respond)
+            self.ib.sleep(2)
+            if mkt_data.last and not math.isnan(mkt_data.last):
+                price = mkt_data.last
+                break
+            if mkt_data.close and not math.isnan(mkt_data.close):
+                price = mkt_data.close
+                break
+            # Fallback: use midpoint of bid/ask if available
+            bid_ok = mkt_data.bid and not math.isnan(mkt_data.bid) and mkt_data.bid > 0
+            ask_ok = mkt_data.ask and not math.isnan(mkt_data.ask) and mkt_data.ask > 0
+            if bid_ok and ask_ok:
+                price = (mkt_data.bid + mkt_data.ask) / 2
+                break
 
         self.ib.cancelMktData(contract)
 
@@ -204,6 +213,10 @@ class IBKRClient:
                              exchange: str) -> 'Trade':
         """Place a Pegged-to-Midpoint order.
 
+        On exchanges that support PEG MID (e.g. US/SMART), places a native
+        midprice order. On exchanges that don't (e.g. EURONEXT/AEB), falls back
+        to a limit order at the calculated (bid+ask)/2.
+
         Args:
             ticker: Stock symbol
             action: 'BUY' or 'SELL'
@@ -213,6 +226,9 @@ class IBKRClient:
         Returns:
             Trade object
         """
+        if not EXCHANGES[exchange].get('native_midprice', True):
+            print(f"[IBKR] PEG MID not supported on {exchange}, falling back to market order")
+            return self.place_market_order(ticker, action, qty, exchange)
         contract = self._create_contract(ticker, exchange)
         order = Order(action=action, totalQuantity=qty, orderType='PEG MID')
         return self._place_and_verify(contract, order, ticker)

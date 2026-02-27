@@ -7,7 +7,14 @@
       "Bash(rm:*)",
       "Bash(python:*)",
       "Bash(netstat:*)",
-      "Bash(python3:*)"
+      "Bash(python3:*)",
+      "Bash(source:*)",
+      "Bash(/c/Users/franc/anaconda3/python:*)",
+      "Bash(/c/Users/franc/AppData/Local/Programs/Python/Python313/python.exe:*)",
+      "Bash(/c/Users/franc/anaconda3/python.exe:*)",
+      "Bash(tasklist:*)",
+      "Bash(taskkill:*)",
+      "Bash(cmd:*)"
     ]
   }
 }
