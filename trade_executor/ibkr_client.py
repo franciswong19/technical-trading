@@ -83,9 +83,14 @@ class IBKRClient:
         """
         if currency:
             values = self.ib.accountValues(account=self.account_id)
+            by_currency = None
             for item in values:
                 if item.tag == 'NetLiquidation-S' and item.currency == currency:
                     return float(item.value)
+                if item.tag == 'NetLiquidationByCurrency' and item.currency == currency:
+                    by_currency = float(item.value)
+            if by_currency is not None:
+                return by_currency
             raise ValueError(
                 f"NetLiquidation not found for account {self.account_id} "
                 f"in {currency}"

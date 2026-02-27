@@ -58,7 +58,7 @@ If validation fails, tell the user what's wrong and ask for correction.
 ### Step 3: Generate Request ID
 Format: `YYYYMMDD-XXX` (sequential per day, managed by `trade_executor/request_id.py`).
 
-Run: `python -c "from trade_executor.request_id import generate_request_id; print(generate_request_id('<EXCHANGE>'))"` where `<EXCHANGE>` is `US`, `XETRA`, or `EURONEXT`.
+Run: `python3 -c "from trade_executor.request_id import generate_request_id; print(generate_request_id('<EXCHANGE>'))"` where `<EXCHANGE>` is `US`, `XETRA`, or `EURONEXT`.
 
 ### Step 4: Build Request JSON
 1. Build the `accounts` list directly from the account IDs provided by the user (Step 0). Each entry uses the account ID as both the `alias` and `account_id`, with `port` always set to `4001`:
@@ -74,11 +74,44 @@ Run: `python -c "from trade_executor.request_id import generate_request_id; prin
      Save to: `trade_executor/state/requests/<request_id>.json`
    - **NORMAL BUY / NORMAL SELL / FAST BUY / FAST SELL**: One request file **per ticker**, each with `ticker_params` containing exactly one entry.
      Save to: `trade_executor/state/requests/<request_id>-<TICKER>.json`
+
+   **TickerParams field reference** (use exact field names — wrong names cause TypeError):
+   | Field | Type | Notes |
+   |-------|------|-------|
+   | `ticker` | str | e.g. `'TQQQ'` |
+   | `fulfillment_pct` | float | 0.01–1.0 (e.g. `0.10` for 10%) |
+   | `initial_order_type` | str | `'market'` / `'midprice'` / `'trailing_stop'` |
+   | `initial_trailing_pct` | float or None | Required if `initial_order_type='trailing_stop'` |
+   | `subsequent_order_type` | str or None | HOT POTATO only: `'trailing_stop'` |
+   | `subsequent_trailing_pct` | float or None | HOT POTATO only |
+   | `stop_type` | str or None | `'NORMAL'` / `'HEIGHTENED'` / `'FIXED_PRICE'` / `'ADHOC'` |
+   | `stop_fixed_price` | float or None | Required if `stop_type='FIXED_PRICE'` |
+   | `stop_adhoc_trailing_pct` | float or None | HOT POTATO only, required if `stop_type='ADHOC'` |
+   | `cycle_threshold` | int or None | HOT POTATO only, default 3 |
+
+   Example (NORMAL BUY, single ticker):
    ```python
-   python -c "
+   python3 -c "
    from trade_executor.models.request import TradeRequest, TickerParams
-   import json
-   # ... construct and write per-ticker request(s)
+   req = TradeRequest(
+       request_id='20260227-001',
+       accounts=[{'alias': 'U1234567', 'account_id': 'U1234567', 'port': 4001}],
+       exchange='XETRA',
+       request_type='NORMAL_BUY',
+       transaction_type='BUY',
+       duration_type='BEFORE_CLOSE',
+       duration_minutes=None,
+       ticker_params=[
+           TickerParams(
+               ticker='SAP',
+               fulfillment_pct=0.10,
+               initial_order_type='midprice',
+               stop_type='NORMAL',
+           )
+       ],
+   )
+   req.to_json('trade_executor/state/requests/20260227-001-SAP.json')
+   print('Written.')
    "
    ```
 
@@ -89,12 +122,12 @@ Run the preview calculator to fetch live prices and estimate quantities. For BUY
 
 **For HOT POTATO** (single request file with all tickers already combined):
 ```
-python -m trade_executor.preview_calculator --request trade_executor/state/requests/<request_id>.json
+python3 -m trade_executor.preview_calculator --request trade_executor/state/requests/<request_id>.json
 ```
 
 **For NORMAL BUY / NORMAL SELL / FAST BUY / FAST SELL** (one file per ticker — pass all files together so the aggregate cash check covers the full request):
 ```
-python -m trade_executor.preview_calculator --requests \
+python3 -m trade_executor.preview_calculator --requests \
   trade_executor/state/requests/<request_id>-<TICKER1>.json \
   trade_executor/state/requests/<request_id>-<TICKER2>.json \
   ...
@@ -162,7 +195,7 @@ Map request types to executors:
 
 **For SELL EVERYTHING NOW and HOT POTATO** (single request, no per-ticker split):
 ```
-python -m trade_executor.executors.<type> --request trade_executor/state/requests/<request_id>.json
+python3 -m trade_executor.executors.<type> --request trade_executor/state/requests/<request_id>.json
 ```
 Then proceed to Step 8 for verification, Step 9 for book-keeping, and Step 10 for final report (same as before).
 
@@ -181,7 +214,7 @@ For tickers [T0, T1, T2, ...] with N accounts:
     T1 (AMZN): offset=2 → acct 0: BASE+2, acct 1: BASE+3
 
 Launch ALL in background simultaneously:
-  python -m trade_executor.executors.<type> --request trade_executor/state/requests/<request_id>-<TICKER>.json --client-id-offset <offset>
+  python3 -m trade_executor.executors.<type> --request trade_executor/state/requests/<request_id>-<TICKER>.json --client-id-offset <offset>
   (one background process per ticker, all launched at the same time)
 
 As each process completes:
@@ -197,7 +230,7 @@ As each process completes:
                Completed: [completed_at_local] (local) / [completed_at_sgt] (SGT)
                Status: [COMPLETED/PARTIAL/FAILED]
   4. Book-keep:
-     python -m trade_executor.trade_recorder --result trade_executor/state/results/<request_id>-<TICKER>.json
+     python3 -m trade_executor.trade_recorder --result trade_executor/state/results/<request_id>-<TICKER>.json
 ```
 If any ticker executor crashes without a result file, report **CRITICAL ALERT** for that ticker and continue to the next.
 
@@ -209,7 +242,7 @@ Read `trade_executor/state/results/<request_id>.json` and verify status, filled_
 
 **Step 9 — Book-keeping:**
 ```
-python -m trade_executor.trade_recorder --result trade_executor/state/results/<request_id>.json
+python3 -m trade_executor.trade_recorder --result trade_executor/state/results/<request_id>.json
 ```
 
 ### Step 10: Final Report
