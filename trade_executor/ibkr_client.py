@@ -349,9 +349,17 @@ class IBKRClient:
     def get_fill_price(self, trade) -> float:
         """Get the average fill price from a completed trade.
 
+        Uses trade.orderStatus.avgFillPrice as the primary source — this is
+        populated atomically with the 'Filled' status update. Falls back to
+        trade.fills (execDetails) which can arrive slightly later.
+
         Returns:
             float: Average fill price, or 0.0 if not filled
         """
+        # Primary: orderStatus fields arrive with the 'Filled' status update
+        if trade.orderStatus.avgFillPrice:
+            return float(trade.orderStatus.avgFillPrice)
+        # Fallback: execDetails (may arrive after orderStatus)
         if trade.fills:
             total_value = sum(f.execution.price * f.execution.shares for f in trade.fills)
             total_shares = sum(f.execution.shares for f in trade.fills)
@@ -362,9 +370,17 @@ class IBKRClient:
     def get_filled_qty(self, trade) -> int:
         """Get the total filled quantity.
 
+        Uses trade.orderStatus.filled as the primary source — this is
+        populated atomically with the 'Filled' status update. Falls back to
+        trade.fills (execDetails) which can arrive slightly later.
+
         Returns:
             int: Total filled shares
         """
+        # Primary: orderStatus fields arrive with the 'Filled' status update
+        if trade.orderStatus.filled:
+            return int(trade.orderStatus.filled)
+        # Fallback: execDetails (may arrive after orderStatus)
         if trade.fills:
             return int(sum(f.execution.shares for f in trade.fills))
         return 0
