@@ -6,7 +6,7 @@ description: Print the NORMAL BUY request template — standard buy with 10-min 
 Print the following template exactly as shown:
 
 ```
-Trading account: LIVE-US, LIVE-US-2, LIVE-EU
+Trading account:
 Exchange: US / XETRA / EURONEXT
 Request type: NORMAL BUY
 Duration: BEFORE CLOSE
@@ -26,7 +26,7 @@ Stop type: NORMAL / HEIGHTENED / FIXED PRICE AT XX.XX
 
 Then tell the user:
 - Add or remove ticker blocks as needed. Multiple tickers are supported.
-- For multiple accounts, separate with commas (e.g. LIVE-US, LIVE-US-2).
+- For multiple accounts, separate with commas (e.g. U11871718, U13868670).
 - **Fixed defaults (do not specify):** Transaction type = BUY, Duration = BEFORE CLOSE.
 - **Not applicable:** Subsequent order type, Cycle threshold.
 - **Stop type reference:**
