@@ -6,7 +6,7 @@ description: Print the FAST SELL request template — time-limited sell with 1-m
 Print the following template exactly as shown:
 
 ```
-Trading account: LIVE-US, LIVE-US-2, LIVE-EU
+Trading account:
 Exchange: US / XETRA / EURONEXT
 Request type: FAST SELL
 Duration: XX MINS
@@ -23,6 +23,6 @@ Fulfillment: <1% - 100%>
 Then tell the user:
 - Duration must be **at least 3 minutes** (replace XX with a number >= 3).
 - Add or remove ticker blocks as needed. Multiple tickers are supported.
-- For multiple accounts, separate with commas (e.g. LIVE-US, LIVE-US-2).
+- For multiple accounts, separate with commas (e.g. U11871718, U13868670).
 - **Fixed defaults (do not specify):** Transaction type = SELL, Initial order type = Midprice.
 - **Not applicable:** Subsequent order type, Stop type, Cycle threshold.

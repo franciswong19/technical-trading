@@ -6,7 +6,7 @@ description: Print the SELL EVERYTHING NOW request template — emergency liquid
 Print the following template exactly as shown:
 
 ```
-Trading account: LIVE-US, LIVE-US-2, LIVE-EU
+Trading account:
 Exchange: US / XETRA / EURONEXT
 Request type: SELL EVERYTHING NOW
 ```
@@ -14,6 +14,6 @@ Request type: SELL EVERYTHING NOW
 Then tell the user:
 - This liquidates **ALL open positions** in the specified account immediately.
 - Select only ONE exchange per request (US, XETRA, or EURONEXT).
-- For multiple accounts on the same exchange, separate with commas (e.g. LIVE-US, LIVE-US-2).
+- For multiple accounts on the same exchange, separate with commas (e.g. U11871718, U13868670).
 - **Fixed defaults (do not specify):** Transaction type = SELL, Duration = IMMED, Fulfillment = 100%, Initial order type = Market.
 - **Not applicable:** Ticker, Subsequent order type, Stop type, Cycle threshold.

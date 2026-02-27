@@ -6,7 +6,7 @@ description: Print the NORMAL SELL request template — standard sell with 10-mi
 Print the following template exactly as shown:
 
 ```
-Trading account: LIVE-US, LIVE-US-2, LIVE-EU
+Trading account:
 Exchange: US / XETRA / EURONEXT
 Request type: NORMAL SELL
 Duration: BEFORE CLOSE
@@ -24,6 +24,6 @@ Initial Order type: midprice / trailing stop at X.X%
 
 Then tell the user:
 - Add or remove ticker blocks as needed. Multiple tickers are supported.
-- For multiple accounts, separate with commas (e.g. LIVE-US, LIVE-US-2).
+- For multiple accounts, separate with commas (e.g. U11871718, U13868670).
 - **Fixed defaults (do not specify):** Transaction type = SELL, Duration = BEFORE CLOSE.
 - **Not applicable:** Subsequent order type, Stop type, Cycle threshold.

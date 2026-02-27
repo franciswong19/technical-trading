@@ -6,7 +6,7 @@ description: Print the HOT POTATO request template — cycle-based buy/sell with
 Print the following template exactly as shown:
 
 ```
-Trading account: LIVE-US, LIVE-US-2, LIVE-EU
+Trading account:
 Exchange: US / XETRA / EURONEXT
 Request type: HOT POTATO
 Transaction type: BUY / SELL
