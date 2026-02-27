@@ -2,3 +2,5 @@ creds/
 # Python cache files
 __pycache__/
 *.pyc
+# Trade executor runtime state
+trade_executor/state/
