@@ -24,7 +24,13 @@ order.account = ACCOUNT_ID
 print(f"Order: {order}")
 
 trade = ib.placeOrder(contract, order)
-ib.sleep(3)
+
+# Wait until the order is done (filled, cancelled, or error) — up to 30 seconds
+print("Waiting for fill...")
+for _ in range(30):
+    ib.sleep(1)
+    if trade.isDone():
+        break
 
 print(f"Order status: {trade.orderStatus.status}")
 print(f"Filled qty:   {trade.orderStatus.filled}")
