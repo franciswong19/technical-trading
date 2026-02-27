@@ -5,7 +5,6 @@ Core monitoring loop engine. Handles fill detection, quantity recalculation,
 and deadline-based escalation to market orders. Exchange-aware deadlines.
 """
 
-import time
 from datetime import datetime, timedelta
 
 import pytz
@@ -70,9 +69,11 @@ class OrderMonitor:
         }
 
         while True:
-            # Sleep for the check interval (in 1-second increments for responsiveness)
+            # Sleep for the check interval (in 1-second increments for responsiveness).
+            # Use ib.sleep() instead of time.sleep() to keep the asyncio event loop running,
+            # which prevents IB Gateway from disconnecting due to missed heartbeats.
             for _ in range(self.check_interval):
-                time.sleep(1)
+                self.client.ib.sleep(1)
                 # Check fill during sleep
                 if self.client.is_filled(trade):
                     result['filled'] = True
@@ -137,7 +138,7 @@ class OrderMonitor:
         """
         while True:
             for _ in range(check_interval):
-                time.sleep(1)
+                self.client.ib.sleep(1)
 
                 # Check each stop
                 for st in stop_trades:
