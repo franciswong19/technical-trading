@@ -75,6 +75,8 @@ def execute(request: TradeRequest, client_id_offset: int = 0) -> ExecutionResult
             trading_currency = EXCHANGES[request.exchange]['currency']
             portfolio_value = client.get_portfolio_value(trading_currency)
             cash_value = client.get_cash_value(trading_currency)
+            pending_buy_value = client.get_pending_buy_value(request.exchange)
+            available_cash = cash_value - pending_buy_value
 
             tp = request.ticker_params[0]
             ticker = tp.ticker
@@ -83,7 +85,7 @@ def execute(request: TradeRequest, client_id_offset: int = 0) -> ExecutionResult
             try:
                 price = client.get_current_price(ticker, request.exchange)
                 qty = calculate_buy_qty(
-                    portfolio_value, cash_value, tp.fulfillment_pct, price, ticker
+                    portfolio_value, available_cash, tp.fulfillment_pct, price, ticker
                 )
                 ticker_result.target_qty = qty
 
@@ -107,7 +109,7 @@ def execute(request: TradeRequest, client_id_offset: int = 0) -> ExecutionResult
                         try:
                             new_price = client.get_current_price(current_ticker, request.exchange)
                             new_qty = calculate_buy_qty(
-                                portfolio_value, cash_value, tp.fulfillment_pct, new_price, current_ticker
+                                portfolio_value, available_cash, tp.fulfillment_pct, new_price, current_ticker
                             )
                             if new_qty != qty and new_qty > 0:
                                 qty = new_qty
@@ -144,7 +146,7 @@ def execute(request: TradeRequest, client_id_offset: int = 0) -> ExecutionResult
                         try:
                             new_price = client.get_current_price(ticker, request.exchange)
                             new_qty = calculate_buy_qty(
-                                portfolio_value, cash_value, tp.fulfillment_pct, new_price, ticker
+                                portfolio_value, available_cash, tp.fulfillment_pct, new_price, ticker
                             )
                             if new_qty <= 0:
                                 new_qty = qty

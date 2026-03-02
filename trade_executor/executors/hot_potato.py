@@ -87,9 +87,17 @@ def execute(request: TradeRequest) -> ExecutionResult:
             trading_currency = EXCHANGES[request.exchange]['currency']
             portfolio_value = client.get_portfolio_value(trading_currency)
             cash_value = client.get_cash_value(trading_currency)
+            pending_buy_value = client.get_pending_buy_value(request.exchange)
+            available_cash = cash_value - pending_buy_value
 
             cycle_count = 0
             all_ticker_results = []
+
+            # If entering SELL cycles, clear any pre-existing stops on the ticker first.
+            # Prevents IBKR treating the combined sell orders as a short sale.
+            if request.transaction_type == 'SELL':
+                client.cancel_orders_for_ticker(ticker)
+                print(f"[HotPotato] Cancelled existing orders for {ticker} before SELL cycles")
 
             # Compute the exchange cutoff time
             cutoff_monitor = OrderMonitor(
@@ -118,7 +126,7 @@ def execute(request: TradeRequest) -> ExecutionResult:
 
                     if request.transaction_type == 'BUY':
                         qty = calculate_buy_qty(
-                            portfolio_value, cash_value, tp.fulfillment_pct, price, ticker
+                            portfolio_value, available_cash, tp.fulfillment_pct, price, ticker
                         )
                     else:
                         holdings = client.get_position_qty(ticker)
@@ -170,7 +178,7 @@ def execute(request: TradeRequest) -> ExecutionResult:
                         new_price = client.get_current_price(ticker, request.exchange)
                         if request.transaction_type == 'BUY':
                             new_qty = calculate_buy_qty(
-                                portfolio_value, cash_value, tp.fulfillment_pct, new_price, ticker
+                                portfolio_value, available_cash, tp.fulfillment_pct, new_price, ticker
                             )
                         else:
                             holdings = client.get_position_qty(ticker)
@@ -291,16 +299,20 @@ def execute(request: TradeRequest) -> ExecutionResult:
                     break
 
             # End-of-day handling
+            # Use transaction_type_before_close if set, otherwise fall back to transaction_type.
+            # transaction_type = direction of each cycle's entry order.
+            # transaction_type_before_close = desired position state at end-of-day.
+            eod_txn = request.transaction_type_before_close or request.transaction_type
             try:
                 current_position = client.get_position_qty(ticker)
                 print(f"[HotPotato] End-of-day: {ticker} position={current_position}, "
-                      f"txn_type={request.transaction_type}")
+                      f"eod_txn={eod_txn}")
 
-                if request.transaction_type == 'BUY' and current_position <= 0:
-                    # Need to buy
+                if eod_txn == 'BUY' and current_position <= 0:
+                    # End-of-day target is to be holding — buy if not already holding
                     price = client.get_current_price(ticker, request.exchange)
                     qty = calculate_buy_qty(
-                        portfolio_value, cash_value, tp.fulfillment_pct, price, ticker
+                        portfolio_value, available_cash, tp.fulfillment_pct, price, ticker
                     )
                     if qty > 0:
                         eod_trade = client.place_market_order(ticker, 'BUY', qty, request.exchange)
@@ -316,8 +328,10 @@ def execute(request: TradeRequest) -> ExecutionResult:
                         stamp_ticker_completion(eod_result, tz)
                         all_ticker_results.append(eod_result)
 
-                elif request.transaction_type == 'SELL' and current_position > 0:
-                    # Need to sell
+                elif eod_txn == 'SELL' and current_position > 0:
+                    # End-of-day target is to be flat — clear any remaining stops first,
+                    # then market sell to avoid IBKR treating combined sells as a short sale.
+                    client.cancel_orders_for_ticker(ticker)
                     eod_trade = client.place_market_order(
                         ticker, 'SELL', current_position, request.exchange
                     )
@@ -333,8 +347,8 @@ def execute(request: TradeRequest) -> ExecutionResult:
                     stamp_ticker_completion(eod_result, tz)
                     all_ticker_results.append(eod_result)
 
-                # BUY + holding -> do nothing
-                # SELL + not holding -> do nothing
+                # BUY + holding -> do nothing (already in desired state)
+                # SELL + not holding -> do nothing (already flat)
 
             except Exception as e:
                 result.errors.append(f"{account_id}/{ticker}: End-of-day handling failed - {e}")

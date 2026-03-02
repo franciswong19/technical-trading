@@ -33,9 +33,10 @@ class TradeRequest:
     exchange: str                 # 'US' / 'XETRA' / 'EURONEXT'
     ticker_params: list           # List of TickerParams (serialized as dicts in JSON)
     request_type: str             # SELL_EVERYTHING_NOW / NORMAL_BUY / NORMAL_SELL / FAST_BUY / FAST_SELL / HOT_POTATO
-    transaction_type: str         # 'BUY' / 'SELL'
+    transaction_type: str         # 'BUY' / 'SELL' — initial order direction
     duration_type: str            # 'IMMEDIATE' / 'BEFORE_CLOSE' / 'TIMED'
     duration_minutes: Optional[int] = None  # If duration_type == 'TIMED'
+    transaction_type_before_close: Optional[str] = None  # HOT POTATO only: 'BUY' / 'SELL' — desired position at end-of-day
 
     def to_json(self, path: str) -> None:
         """Write request to a JSON file."""

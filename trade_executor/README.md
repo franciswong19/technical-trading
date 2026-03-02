@@ -323,7 +323,8 @@ Same as NORMAL SELL but with 1-minute monitoring and timed deadline.
 | Field | Value |
 |-------|-------|
 | Tickers | **Single ticker only** |
-| Transaction | BUY or SELL |
+| Transaction | BUY or SELL — direction of each cycle's entry order |
+| Transaction before close | BUY or SELL — desired position state at end-of-day (required) |
 | Fulfillment | 1% - 100% |
 | Initial order type | Midprice OR Trailing Stop at X.X% |
 | Subsequent order type | Trailing Stop at X.X% (required) |
@@ -341,11 +342,23 @@ Same as NORMAL SELL but with 1-minute monitoring and timed deadline.
 5. On trigger: Cancel the other stop, increment cycle counter
 6. If counter < `cycle_threshold`: Repeat from step 1 using `subsequent_order_type`
 7. If counter >= threshold: Stop cycling
-8. **End-of-day handling** (at exchange cutoff):
-   - BUY + currently holding → Do nothing (keep position)
+8. **End-of-day handling** (at exchange cutoff) — driven by `transaction_type_before_close`:
+   - BUY + currently holding → Do nothing (already in desired state)
    - BUY + not holding → Market buy (ensure you end up holding)
    - SELL + currently holding → Market sell (ensure flat)
-   - SELL + not holding → Do nothing
+   - SELL + not holding → Do nothing (already flat)
+
+> **`transaction_type` vs `transaction_type_before_close`**:
+> `transaction_type` is the direction of each cycle's entry order (BUY or SELL).
+> `transaction_type_before_close` is the desired position state at end-of-day, used only for the end-of-day safety net.
+> All four combinations are valid:
+>
+> | `transaction_type` | `transaction_type_before_close` | Pattern |
+> |--------------------|----------------------------------|---------|
+> | BUY | BUY | Day-trade style: cycle buys, end the day **holding** (overnight position) |
+> | BUY | SELL | Day-trade style: cycle buys, go **flat before close** (no overnight exposure) |
+> | SELL | SELL | Cycle sells/reduce, end the day **flat** |
+> | SELL | BUY | Cycle sells during session, then **buy back** to ensure holding at close |
 
 ---
 
@@ -358,6 +371,7 @@ Trading account: <account1, account2>
 Exchange: US / XETRA / EURONEXT
 Request type: SELL EVERYTHING NOW / NORMAL BUY / NORMAL SELL / FAST BUY / FAST SELL / HOT POTATO
 Transaction type: BUY / SELL
+Transaction type before close: BUY / SELL (HOT POTATO only)
 Duration: IMMED / BEFORE CLOSE / XX MINS
 
 --- Ticker 1 ---
@@ -451,7 +465,7 @@ Central configuration. All tunable parameters in one file.
 
 | Method | Description |
 |--------|-------------|
-| `connect()` | Connect to IBKR. Raises `IBKRConnectionError` on failure. |
+| `connect()` | Connect to IBKR. Immediately calls `reqAllOpenOrders()` to sync orders from all sessions (TWS, mobile, other API clients). Raises `IBKRConnectionError` on failure. |
 | `disconnect()` | Graceful disconnect. |
 | `get_portfolio_value()` | Returns `NetLiquidation` (float). |
 | `get_cash_value()` | Returns `TotalCashValue` (float). |
@@ -465,6 +479,7 @@ Central configuration. All tunable parameters in one file.
 | `modify_order_qty(trade, new_qty)` | Modifies quantity on an existing order. |
 | `cancel_order(trade)` | Cancels a specific order. |
 | `cancel_all_orders()` | Cancels all open orders via `reqGlobalCancel()`. Returns count. |
+| `get_pending_buy_value(exchange)` | Returns estimated cash committed to pending BUY orders from all sessions (LMT/STP price × remaining qty). MKT and PEG MID orders are excluded. Used to compute `available_cash` before BUY checks. |
 | `is_filled(trade)` | Returns True if trade is fully filled. |
 | `get_fill_price(trade)` | Returns average fill price (float). |
 | `get_filled_qty(trade)` | Returns total filled shares (int). |
@@ -638,7 +653,8 @@ Uses `utils/utils_gsheet_handler.py` for authentication (`authenticate_gsheet`) 
 | `exchange` | `str` | 'US' / 'XETRA' / 'EURONEXT' |
 | `ticker_params` | `list[TickerParams]` | Per-ticker parameters |
 | `request_type` | `str` | 'SELL_EVERYTHING_NOW' / 'NORMAL_BUY' / etc. |
-| `transaction_type` | `str` | 'BUY' / 'SELL' |
+| `transaction_type` | `str` | 'BUY' / 'SELL' — direction of each entry order |
+| `transaction_type_before_close` | `str?` | HOT POTATO only: 'BUY' / 'SELL' — desired position at end-of-day |
 | `duration_type` | `str` | 'IMMEDIATE' / 'BEFORE_CLOSE' / 'TIMED' |
 | `duration_minutes` | `int?` | If duration_type is TIMED |
 
