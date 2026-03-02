@@ -38,6 +38,7 @@ Written by the main agent to `trade_executor/state/requests/<request_id>.json`:
   }],
   "request_type": "NORMAL_BUY",
   "transaction_type": "BUY",
+  "transaction_type_before_close": null,
   "duration_type": "BEFORE_CLOSE",
   "duration_minutes": null
 }

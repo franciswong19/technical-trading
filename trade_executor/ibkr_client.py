@@ -42,12 +42,22 @@ class IBKRClient:
     def connect(self) -> None:
         """Connect to IBKR TWS/IB Gateway.
 
+        After connecting, immediately syncs all open orders from all sessions
+        (TWS, mobile app, other API clients). This ensures cancel_orders_for_ticker()
+        sees pre-existing stops and get_pending_buy_value() has an accurate picture
+        of committed cash before any checks or cancellations are performed.
+
         Raises:
             IBKRConnectionError: If connection fails
         """
         try:
             self.ib.connect(self.host, self.port, clientId=self.client_id, timeout=5)
             print(f"[IBKR] Connected: account={self.account_id}, port={self.port}, clientId={self.client_id}")
+            # Pull in orders from all sessions — without this, openTrades() only
+            # reflects orders placed by this specific API client_id.
+            self.ib.reqAllOpenOrders()
+            self.ib.sleep(1)
+            print(f"[IBKR] All open orders synced ({len(self.ib.openTrades())} open trades visible)")
         except Exception as e:
             raise IBKRConnectionError(
                 f"Failed to connect to IBKR at {self.host}:{self.port} "
@@ -353,6 +363,48 @@ class IBKRClient:
     def get_open_orders(self) -> list:
         """Get all open orders."""
         return self.ib.openOrders()
+
+    def get_pending_buy_value(self, exchange: str) -> float:
+        """Estimate cash committed to pending BUY orders from all sessions.
+
+        Must be called after connect() so reqAllOpenOrders() has already synced
+        orders from all sessions. Used to compute truly available cash before
+        placing a new BUY order or performing a cash sufficiency check.
+
+        Only counts orders with a determinable price (LMT via lmtPrice, or STP/TRAIL
+        via auxPrice). Market (MKT) and pegged (PEG MID) orders are excluded because
+        their execution price is not known in advance.
+
+        Args:
+            exchange: Exchange key — used only for log context
+
+        Returns:
+            float: Estimated cash reserved by pending BUY orders
+        """
+        active_statuses = {'PreSubmitted', 'Submitted', 'PendingSubmit'}
+        total = 0.0
+        for trade in self.ib.openTrades():
+            if trade.order.action != 'BUY':
+                continue
+            if trade.orderStatus.status not in active_statuses:
+                continue
+            remaining_qty = trade.order.totalQuantity - (trade.orderStatus.filled or 0)
+            if remaining_qty <= 0:
+                continue
+            # Determine price: prefer lmtPrice, fall back to auxPrice (stop/trail price)
+            price = None
+            if trade.order.lmtPrice and trade.order.lmtPrice > 0:
+                price = trade.order.lmtPrice
+            elif trade.order.auxPrice and trade.order.auxPrice > 0:
+                price = trade.order.auxPrice
+            if price:
+                reserved = remaining_qty * price
+                total += reserved
+                print(f"[IBKR] Pending BUY [{exchange}]: {trade.contract.symbol} "
+                      f"{remaining_qty} @ {price:.2f} = {reserved:.2f} reserved")
+        if total > 0:
+            print(f"[IBKR] Total pending BUY reserved cash [{exchange}]: {total:.2f}")
+        return total
 
     # ==========================================
     # FILL DETECTION

@@ -66,6 +66,8 @@ def generate_preview(request: TradeRequest) -> dict:
             "alias": alias,
             "portfolio_value": None,
             "cash_value": None,
+            "pending_buy_reserved": None,
+            "available_cash": None,
             "tickers": [],
         }
 
@@ -76,13 +78,17 @@ def generate_preview(request: TradeRequest) -> dict:
             # Fetch account-level data
             portfolio_value = client.get_portfolio_value(currency=currency)
             cash_value = client.get_cash_value(currency=currency)
+            pending_buy_value = client.get_pending_buy_value(exchange)
+            available_cash = cash_value - pending_buy_value
             acct_result["portfolio_value"] = round(portfolio_value, 2)
             acct_result["cash_value"] = round(cash_value, 2)
+            acct_result["pending_buy_reserved"] = round(pending_buy_value, 2)
+            acct_result["available_cash"] = round(available_cash, 2)
 
-            # Aggregate cash check for BUY requests
+            # Aggregate cash check for BUY requests (against available cash after pending buys)
             if is_buy:
                 try:
-                    validate_total_cash(portfolio_value, cash_value,
+                    validate_total_cash(portfolio_value, available_cash,
                                         request.ticker_params)
                 except InsufficientCashForRequestError as e:
                     acct_result["tickers"] = [{
@@ -114,7 +120,7 @@ def generate_preview(request: TradeRequest) -> dict:
                     holdings = None
                     if is_buy:
                         qty = calculate_buy_qty(
-                            portfolio_value, cash_value,
+                            portfolio_value, available_cash,
                             tp.fulfillment_pct, price,
                             ticker=tp.ticker,
                         )

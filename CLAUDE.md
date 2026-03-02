@@ -35,7 +35,8 @@ When the user provides a filled template or free-text request, extract:
 - Trading account(s)
 - Exchange (US / XETRA / EURONEXT)
 - Request type
-- Transaction type (BUY / SELL)
+- Transaction type (BUY / SELL) — direction of each entry order
+- **HOT POTATO only**: Transaction type before close (BUY / SELL) — desired position state at end-of-day
 - Duration
 - Per-ticker parameters: ticker, fulfillment %, order type, stop type
 
@@ -46,6 +47,7 @@ Apply these rules:
 |-------|---------------------|------------|-------------|----------|-----------|------------|
 | Tickers | N/A (all positions) | Multiple | Multiple | Multiple | Multiple | Single only |
 | Transaction | SELL | BUY | SELL | BUY | SELL | BUY or SELL |
+| Transaction before close | N/A | N/A | N/A | N/A | N/A | BUY or SELL (required — may differ from Transaction) |
 | Fulfillment | 100% (fixed) | 1%-100% | 1%-100% | 1%-100% | 1%-100% | 1%-100% |
 | Initial order | Market (fixed) | Midprice or Trailing Stop | Midprice or Trailing Stop | Midprice (fixed) | Midprice (fixed) | Midprice or Trailing Stop |
 | Subsequent order | N/A | N/A | N/A | N/A | N/A | Trailing Stop (required) |
@@ -89,6 +91,18 @@ Run: `python3 -c "from trade_executor.request_id import generate_request_id; pri
    | `stop_adhoc_trailing_pct` | float or None | HOT POTATO only, required if `stop_type='ADHOC'` |
    | `cycle_threshold` | int or None | HOT POTATO only, default 3 |
 
+   **TradeRequest field reference** (top-level fields):
+   | Field | Type | Notes |
+   |-------|------|-------|
+   | `request_id` | str | e.g. `'20260227-001'` |
+   | `accounts` | list | `[{'alias': ..., 'account_id': ..., 'port': 4001}]` |
+   | `exchange` | str | `'US'` / `'XETRA'` / `'EURONEXT'` |
+   | `request_type` | str | e.g. `'HOT_POTATO'` |
+   | `transaction_type` | str | `'BUY'` / `'SELL'` — direction of each cycle's entry order |
+   | `transaction_type_before_close` | str or None | HOT POTATO only: `'BUY'` / `'SELL'` — desired position at end-of-day. **May differ from `transaction_type`.** All four combinations are valid: BUY/BUY (cycle buys, end holding), BUY/SELL (cycle buys, go flat at close), SELL/SELL (cycle sells, end flat), SELL/BUY (cycle sells, buy back at close). |
+   | `duration_type` | str | `'IMMEDIATE'` / `'BEFORE_CLOSE'` / `'TIMED'` |
+   | `duration_minutes` | int or None | Required if `duration_type='TIMED'` |
+
    Example (NORMAL BUY, single ticker):
    ```python
    python3 -c "
@@ -111,6 +125,37 @@ Run: `python3 -c "from trade_executor.request_id import generate_request_id; pri
        ],
    )
    req.to_json('trade_executor/state/requests/20260227-001-SAP.json')
+   print('Written.')
+   "
+   ```
+
+   Example (HOT POTATO — note `transaction_type_before_close` is required):
+   ```python
+   python3 -c "
+   from trade_executor.models.request import TradeRequest, TickerParams
+   req = TradeRequest(
+       request_id='20260227-002',
+       accounts=[{'alias': 'U1234567', 'account_id': 'U1234567', 'port': 4001}],
+       exchange='US',
+       request_type='HOT_POTATO',
+       transaction_type='BUY',
+       transaction_type_before_close='BUY',
+       duration_type='TIMED',
+       duration_minutes=60,
+       ticker_params=[
+           TickerParams(
+               ticker='TQQQ',
+               fulfillment_pct=0.10,
+               initial_order_type='midprice',
+               subsequent_order_type='trailing_stop',
+               subsequent_trailing_pct=1.5,
+               stop_type='ADHOC',
+               stop_adhoc_trailing_pct=2.0,
+               cycle_threshold=3,
+           )
+       ],
+   )
+   req.to_json('trade_executor/state/requests/20260227-002.json')
    print('Written.')
    "
    ```
@@ -164,7 +209,7 @@ Transaction: [BUY/SELL]
 Duration: [duration]
 
 Account: [alias] ([account_id])
-  Portfolio value: $XX,XXX.XX | Cash: $XX,XXX.XX
+  Portfolio value: $XX,XXX.XX | Cash: $XX,XXX.XX | Pending BUY reserved: $X,XXX.XX | Available: $XX,XXX.XX
 
 Ticker Details:
   [TICKER]: [fulfillment%], [order type], stop=[stop type]
