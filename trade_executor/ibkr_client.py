@@ -338,27 +338,58 @@ class IBKRClient:
         return count
 
     def cancel_orders_for_ticker(self, ticker: str) -> int:
-        """Cancel all open orders for a specific ticker.
+        """Cancel all open orders for a specific ticker across all sessions.
 
         Used before placing a sell order to avoid IBKR treating the combined
         open sell orders (e.g. existing stop-loss + new sell) as a short sale.
+
+        Attempts per-order cancel first. If any orders remain after 2s (e.g. they
+        belong to a different client session and Error 10147 was returned), falls back
+        to reqGlobalCancel() which works across all sessions, then re-verifies.
 
         Args:
             ticker: Stock symbol
 
         Returns:
             int: Number of orders cancelled
+
+        Raises:
+            RuntimeError: If orders still remain after both cancel attempts.
         """
         open_trades = self.ib.openTrades()
-        cancelled = 0
-        for trade in open_trades:
-            if trade.contract.symbol == ticker:
-                self.ib.cancelOrder(trade.order)
-                cancelled += 1
-        if cancelled > 0:
+        to_cancel = [t for t in open_trades if t.contract.symbol == ticker]
+        if not to_cancel:
+            return 0
+
+        # Statuses that indicate a cancel is accepted/in-flight — safe to proceed
+        cancelling_statuses = {'PendingCancel', 'Cancelled', 'Inactive', 'ApiCancelled'}
+
+        for trade in to_cancel:
+            self.ib.cancelOrder(trade.order)
+        self.ib.sleep(2)
+
+        still_open = [
+            t for t in self.ib.openTrades()
+            if t.contract.symbol == ticker
+            and t.orderStatus.status not in cancelling_statuses
+        ]
+        if still_open:
+            # Per-order cancel failed (likely cross-session orders); fall back to global cancel
+            print(f"[IBKR] Per-order cancel incomplete for {ticker} ({len(still_open)} remaining) — using reqGlobalCancel()")
+            self.ib.reqGlobalCancel()
             self.ib.sleep(2)
-            print(f"[IBKR] Cancelled {cancelled} open order(s) for {ticker} before selling")
-        return cancelled
+            still_open = [
+                t for t in self.ib.openTrades()
+                if t.contract.symbol == ticker
+                and t.orderStatus.status not in cancelling_statuses
+            ]
+            if still_open:
+                raise RuntimeError(
+                    f"Failed to cancel {len(still_open)} open order(s) for {ticker} even after reqGlobalCancel()."
+                )
+
+        print(f"[IBKR] Cancelled {len(to_cancel)} open order(s) for {ticker} before selling")
+        return len(to_cancel)
 
     def get_open_orders(self) -> list:
         """Get all open orders."""
