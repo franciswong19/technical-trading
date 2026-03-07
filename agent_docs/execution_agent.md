@@ -29,6 +29,7 @@ Written by the main agent to `trade_executor/state/requests/<request_id>.json`:
     "fulfillment_pct": 0.10,
     "initial_order_type": "midprice",
     "initial_trailing_pct": null,
+    "initial_threshold_price": null,
     "subsequent_order_type": null,
     "subsequent_trailing_pct": null,
     "stop_type": "NORMAL",
@@ -87,6 +88,18 @@ Written by the executor to `trade_executor/state/results/<request_id>.json`:
 | NORMAL BUY/SELL | 10 min | Exchange cutoff (15 min before close) |
 | FAST BUY/SELL | 1 min | Timed (start + XX min) |
 | HOT POTATO | 1 min fill / 5 min stops | Timed + exchange cutoff |
+
+## Trailing Stop Threshold Behavior
+When `initial_order_type='trailing_stop_threshold'`, no order is placed immediately. Instead:
+- The executor polls price every 10 minutes.
+- **BUY**: places a trailing stop only when `current_price < initial_threshold_price`.
+- **SELL**: places a trailing stop only when `current_price > initial_threshold_price`.
+- At the deadline itself (3:45 PM / exchange cutoff for NORMAL BUY/SELL; at the timed deadline for HOT POTATO):
+  - If a trailing stop was placed earlier but not yet filled → cancel trailing stop → market order (handled by `monitor_until_fill_or_deadline` escalation).
+  - If no order has been placed yet and condition is met → place market order.
+  - If no order has been placed yet and condition is not met → no order placed, executor exits with an informational error in the result.
+- Once a trailing stop IS placed (non-deadline path), fill monitoring continues normally (including market escalation at deadline).
+- Only supported for NORMAL BUY, NORMAL SELL, HOT POTATO (cycle 0 only).
 
 ## Error Handling
 - Connection failure: Aborts entire request

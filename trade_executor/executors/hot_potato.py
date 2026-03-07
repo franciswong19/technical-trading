@@ -141,37 +141,124 @@ def execute(request: TradeRequest) -> ExecutionResult:
                         break
 
                     # Place order: initial for first cycle, subsequent for later cycles
-                    if cycle_count == 0:
-                        order_type = tp.initial_order_type
-                        trail_pct = tp.initial_trailing_pct
+                    if cycle_count == 0 and tp.initial_order_type == 'trailing_stop_threshold':
+                        # ----------------------------------------------------------------
+                        # TRAILING STOP WITH THRESHOLD PRICE (cycle 0 only)
+                        # Poll price every 10 min until condition met or near deadline.
+                        # BUY: price < threshold → place trailing stop
+                        # SELL: price > threshold → place trailing stop
+                        # At last check window: condition met → market order, else break
+                        # ----------------------------------------------------------------
+                        threshold_price = tp.initial_threshold_price
+                        is_buy = request.transaction_type == 'BUY'
+                        condition = (lambda p: p < threshold_price) if is_buy else (lambda p: p > threshold_price)
+                        direction_desc = f"< {threshold_price:.2f}" if is_buy else f"> {threshold_price:.2f}"
+
+                        remaining_mins = max(1, int((deadline - datetime.now(tz)).total_seconds() / 60))
+                        threshold_monitor = OrderMonitor(
+                            client, NORMAL_CHECK_INTERVAL, DURATION_TIMED,
+                            request.exchange, deadline_minutes=remaining_mins,
+                        )
+
+                        print(f"[HotPotato] Cycle {seq_num}: waiting for price {direction_desc} before placing trailing stop for {ticker}...")
+                        threshold_result = threshold_monitor.wait_for_threshold_or_deadline(
+                            lambda: client.get_current_price(ticker, request.exchange),
+                            condition,
+                        )
+                        current_price = threshold_result['price']
+
+                        if threshold_result['near_deadline']:
+                            if threshold_result['condition_met']:
+                                # Last check, condition met → market order
+                                print(f"[HotPotato] Cycle {seq_num}: last check condition met at price={current_price:.2f}, placing market order for {ticker}")
+                                if is_buy:
+                                    qty = calculate_buy_qty(portfolio_value, available_cash, tp.fulfillment_pct, current_price, ticker)
+                                else:
+                                    holdings = client.get_position_qty(ticker)
+                                    qty = calculate_sell_qty(holdings, tp.fulfillment_pct, ticker)
+                                ticker_result.target_qty = qty
+                                if qty <= 0:
+                                    ticker_result.error = f"Calculated qty is 0 at threshold trigger (cycle {seq_num})"
+                                    stamp_ticker_completion(ticker_result, tz)
+                                    all_ticker_results.append(ticker_result)
+                                    break
+                                trade = client.place_market_order(ticker, request.transaction_type, qty, request.exchange)
+                                ticker_result.order_type_used = 'market'
+                                ticker_result.escalated_to_market = True
+                                filled = client.wait_for_fill(trade, timeout_seconds=60)
+                                mon_result = {'filled': filled, 'trade': trade, 'deadline_reached': False}
+                                if not filled:
+                                    ticker_result.error = "Market escalation failed (threshold last check)"
+                                    stamp_ticker_completion(ticker_result, tz)
+                                    all_ticker_results.append(ticker_result)
+                                    break
+                            else:
+                                # Threshold not met at deadline → abort cycle loop
+                                print(f"[HotPotato] Cycle {seq_num}: threshold not met at deadline for {ticker} (price={current_price:.2f}), stopping")
+                                ticker_result.error = f"Threshold not met at deadline (price={current_price:.2f}), no order placed"
+                                stamp_ticker_completion(ticker_result, tz)
+                                all_ticker_results.append(ticker_result)
+                                break
+                        else:
+                            # Condition met before deadline → place trailing stop, monitor with fast interval
+                            print(f"[HotPotato] Cycle {seq_num}: threshold met at price={current_price:.2f}, placing trailing stop for {ticker}")
+                            if is_buy:
+                                qty = calculate_buy_qty(portfolio_value, available_cash, tp.fulfillment_pct, current_price, ticker)
+                            else:
+                                holdings = client.get_position_qty(ticker)
+                                qty = calculate_sell_qty(holdings, tp.fulfillment_pct, ticker)
+                            ticker_result.target_qty = qty
+                            if qty <= 0:
+                                ticker_result.error = f"Calculated qty is 0 at threshold trigger (cycle {seq_num})"
+                                stamp_ticker_completion(ticker_result, tz)
+                                all_ticker_results.append(ticker_result)
+                                break
+                            trade = client.place_trailing_stop_order(
+                                ticker, request.transaction_type, qty, tp.initial_trailing_pct, request.exchange
+                            )
+                            ticker_result.order_type_used = 'trailing_stop'
+
+                            remaining_mins = max(1, int((deadline - datetime.now(tz)).total_seconds() / 60))
+                            fill_monitor = OrderMonitor(
+                                client, FAST_CHECK_INTERVAL, DURATION_TIMED,
+                                request.exchange, deadline_minutes=remaining_mins,
+                            )
+                            mon_result = fill_monitor.monitor_until_fill_or_deadline(trade, ticker)
+
                     else:
-                        order_type = tp.subsequent_order_type or 'trailing_stop'
-                        trail_pct = tp.subsequent_trailing_pct
+                        # Standard order placement (midprice / trailing_stop / market)
+                        # Also handles all subsequent cycles (cycle_count > 0)
+                        if cycle_count == 0:
+                            order_type = tp.initial_order_type
+                            trail_pct = tp.initial_trailing_pct
+                        else:
+                            order_type = tp.subsequent_order_type or 'trailing_stop'
+                            trail_pct = tp.subsequent_trailing_pct
 
-                    if order_type == 'midprice':
-                        trade = client.place_midprice_order(
-                            ticker, request.transaction_type, qty, request.exchange
-                        )
-                        ticker_result.order_type_used = 'midprice'
-                    elif order_type == 'trailing_stop':
-                        trade = client.place_trailing_stop_order(
-                            ticker, request.transaction_type, qty, trail_pct, request.exchange
-                        )
-                        ticker_result.order_type_used = 'trailing_stop'
-                    else:
-                        trade = client.place_market_order(
-                            ticker, request.transaction_type, qty, request.exchange
-                        )
-                        ticker_result.order_type_used = 'market'
+                        if order_type == 'midprice':
+                            trade = client.place_midprice_order(
+                                ticker, request.transaction_type, qty, request.exchange
+                            )
+                            ticker_result.order_type_used = 'midprice'
+                        elif order_type == 'trailing_stop':
+                            trade = client.place_trailing_stop_order(
+                                ticker, request.transaction_type, qty, trail_pct, request.exchange
+                            )
+                            ticker_result.order_type_used = 'trailing_stop'
+                        else:
+                            trade = client.place_market_order(
+                                ticker, request.transaction_type, qty, request.exchange
+                            )
+                            ticker_result.order_type_used = 'market'
 
-                    # Monitor for fill (1 min interval, escalate 1 min before deadline)
-                    remaining_mins = max(1, int((deadline - datetime.now(tz)).total_seconds() / 60))
-                    fill_monitor = OrderMonitor(
-                        client, FAST_CHECK_INTERVAL, DURATION_TIMED,
-                        request.exchange, deadline_minutes=remaining_mins,
-                    )
+                        # Monitor for fill (1 min interval, escalate 1 min before deadline)
+                        remaining_mins = max(1, int((deadline - datetime.now(tz)).total_seconds() / 60))
+                        fill_monitor = OrderMonitor(
+                            client, FAST_CHECK_INTERVAL, DURATION_TIMED,
+                            request.exchange, deadline_minutes=remaining_mins,
+                        )
 
-                    mon_result = fill_monitor.monitor_until_fill_or_deadline(trade, ticker)
+                        mon_result = fill_monitor.monitor_until_fill_or_deadline(trade, ticker)
 
                     if not mon_result['filled'] and mon_result['deadline_reached']:
                         # Escalate to market

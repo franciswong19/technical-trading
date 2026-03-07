@@ -84,106 +84,106 @@ def execute(request: TradeRequest, client_id_offset: int = 0) -> ExecutionResult
             ticker_result = TickerResult(ticker=ticker, action='BUY')
 
             try:
-                # Get price and calculate qty
-                price = client.get_current_price(ticker, request.exchange)
-                qty = calculate_buy_qty(
-                    portfolio_value, available_cash, tp.fulfillment_pct, price, ticker
-                )
-                ticker_result.target_qty = qty
-
-                if qty <= 0:
-                    ticker_result.error = f"Calculated qty is 0 (pv={portfolio_value:.2f}, pct={tp.fulfillment_pct}, price={price:.2f})"
-                    account_result.ticker_results.append(ticker_result)
-                else:
-                    # Place initial order
-                    if tp.initial_order_type == 'midprice':
-                        trade = client.place_midprice_order(ticker, 'BUY', qty, request.exchange)
-                        ticker_result.order_type_used = 'midprice'
-                    elif tp.initial_order_type == 'trailing_stop':
-                        trade = client.place_trailing_stop_order(
-                            ticker, 'BUY', qty, tp.initial_trailing_pct, request.exchange
-                        )
-                        ticker_result.order_type_used = 'trailing_stop'
-                    else:
-                        trade = client.place_market_order(ticker, 'BUY', qty, request.exchange)
-                        ticker_result.order_type_used = 'market'
-
-                    # Set up monitor
+                if tp.initial_order_type == 'trailing_stop_threshold':
+                    # ----------------------------------------------------------------
+                    # TRAILING STOP WITH THRESHOLD PRICE
+                    # Poll price every 10 min. Only place an order when price < threshold.
+                    # At the last check window (15 min before close):
+                    #   - condition met  → market order
+                    #   - condition not met → no order, exit
+                    # ----------------------------------------------------------------
+                    threshold_price = tp.initial_threshold_price
                     monitor = OrderMonitor(
                         client, NORMAL_CHECK_INTERVAL, DURATION_BEFORE_CLOSE,
                         request.exchange,
                     )
 
-                    # Define recalculation callback
-                    def on_check(current_trade, current_ticker):
-                        nonlocal qty
-                        try:
-                            new_price = client.get_current_price(current_ticker, request.exchange)
-                            new_qty = calculate_buy_qty(
-                                portfolio_value, available_cash, tp.fulfillment_pct, new_price, current_ticker
-                            )
-                            if new_qty != qty and new_qty > 0:
-                                qty = new_qty
-                                client.modify_order_qty(current_trade, new_qty)
-                                ticker_result.target_qty = new_qty
-                                print(f"[NormalBuy] Updated {current_ticker} qty to {new_qty} at ${new_price:.2f}")
-                        except Exception as e:
-                            print(f"[NormalBuy] Recalc error for {current_ticker}: {e}")
-                        return None
-
-                    # Monitor until fill or deadline
-                    mon_result = monitor.monitor_until_fill_or_deadline(
-                        trade, ticker, on_check_callback=on_check
+                    print(f"[NormalBuy] Waiting for price < {threshold_price:.2f} before placing trailing stop for {ticker}...")
+                    threshold_result = monitor.wait_for_threshold_or_deadline(
+                        lambda: client.get_current_price(ticker, request.exchange),
+                        lambda p: p < threshold_price,
                     )
+                    current_price = threshold_result['price']
 
-                    if mon_result['filled']:
-                        # Filled successfully
-                        fill_price = client.get_fill_price(mon_result['trade'])
-                        filled_qty = client.get_filled_qty(mon_result['trade'])
-                        ticker_result.filled_qty = filled_qty
-                        ticker_result.avg_fill_price = fill_price
-                        stamp_ticker_fill(ticker_result, tz)
-                        print(f"[NormalBuy] ORDER FILLED: {ticker} - {filled_qty} @ {fill_price:.4f}")
-                        _write_fill_notification(request.request_id, ticker_result, STATUS_DIR)
-
-                        # Wait 15 min then place stop loss. Use ib.sleep() (not time.sleep())
-                        # so the asyncio event loop stays alive and the connection is maintained.
-                        print(f"[NormalBuy] Waiting {STOP_LOSS_DELAY}s before placing stop loss for {ticker}...")
-                        client.ib.sleep(STOP_LOSS_DELAY)
-                        stop_result = stop_mgr.place_stop_loss_now(
-                            ticker, filled_qty, fill_price,
-                            tp.stop_type, tp.stop_fixed_price,
+                    if threshold_result['near_deadline']:
+                        if threshold_result['condition_met']:
+                            # Last check, condition met → market order
+                            print(f"[NormalBuy] Last check: price={current_price:.2f} < threshold={threshold_price:.2f}, placing market order for {ticker}")
+                            qty = calculate_buy_qty(
+                                portfolio_value, available_cash, tp.fulfillment_pct, current_price, ticker
+                            )
+                            ticker_result.target_qty = qty
+                            if qty > 0:
+                                market_trade = client.place_market_order(ticker, 'BUY', qty, request.exchange)
+                                ticker_result.order_type_used = 'market'
+                                ticker_result.escalated_to_market = True
+                                filled = client.wait_for_fill(market_trade, timeout_seconds=60)
+                                if filled:
+                                    fill_price = client.get_fill_price(market_trade)
+                                    filled_qty = client.get_filled_qty(market_trade)
+                                    ticker_result.filled_qty = filled_qty
+                                    ticker_result.avg_fill_price = fill_price
+                                    stamp_ticker_fill(ticker_result, tz)
+                                    print(f"[NormalBuy] ORDER FILLED (threshold market): {ticker} - {filled_qty} @ {fill_price:.4f}")
+                                    _write_fill_notification(request.request_id, ticker_result, STATUS_DIR)
+                                    print(f"[NormalBuy] Waiting {STOP_LOSS_DELAY}s before placing stop loss for {ticker}...")
+                                    client.ib.sleep(STOP_LOSS_DELAY)
+                                    stop_result = stop_mgr.place_stop_loss_now(
+                                        ticker, filled_qty, fill_price,
+                                        tp.stop_type, tp.stop_fixed_price,
+                                    )
+                                    ticker_result.stop_loss_placed = stop_result['success']
+                                    ticker_result.stop_loss_price = stop_result['stop_price']
+                                else:
+                                    ticker_result.error = "Market order did not fill within 60s"
+                                    result.errors.append(f"{account_id}/{ticker}: Market order timeout")
+                            else:
+                                ticker_result.error = f"Calculated qty is 0 at threshold trigger (pv={portfolio_value:.2f}, pct={tp.fulfillment_pct}, price={current_price:.2f})"
+                        else:
+                            # Last check, condition not met → no order placed
+                            print(f"[NormalBuy] Threshold not met at deadline for {ticker} (price={current_price:.2f} >= threshold={threshold_price:.2f}), no order placed")
+                            ticker_result.error = f"Threshold not met at deadline (price={current_price:.2f} >= threshold={threshold_price:.2f})"
+                    else:
+                        # Condition met before deadline → place trailing stop and monitor normally
+                        print(f"[NormalBuy] Threshold met: price={current_price:.2f} < {threshold_price:.2f}, placing trailing stop for {ticker}")
+                        qty = calculate_buy_qty(
+                            portfolio_value, available_cash, tp.fulfillment_pct, current_price, ticker
                         )
-                        ticker_result.stop_loss_placed = stop_result['success']
-                        ticker_result.stop_loss_price = stop_result['stop_price']
-
-                    elif mon_result['deadline_reached']:
-                        # Deadline: recalculate and escalate to market
-                        try:
-                            new_price = client.get_current_price(ticker, request.exchange)
-                            new_qty = calculate_buy_qty(
-                                portfolio_value, available_cash, tp.fulfillment_pct, new_price, ticker
+                        ticker_result.target_qty = qty
+                        if qty > 0:
+                            trade = client.place_trailing_stop_order(
+                                ticker, 'BUY', qty, tp.initial_trailing_pct, request.exchange
                             )
-                            if new_qty <= 0:
-                                new_qty = qty
+                            ticker_result.order_type_used = 'trailing_stop'
 
-                            market_trade = monitor.escalate_to_market(
-                                mon_result['trade'], ticker, 'BUY', new_qty
+                            def on_check(current_trade, current_ticker):
+                                nonlocal qty
+                                try:
+                                    new_price = client.get_current_price(current_ticker, request.exchange)
+                                    new_qty = calculate_buy_qty(
+                                        portfolio_value, available_cash, tp.fulfillment_pct, new_price, current_ticker
+                                    )
+                                    if new_qty != qty and new_qty > 0:
+                                        qty = new_qty
+                                        client.modify_order_qty(current_trade, new_qty)
+                                        ticker_result.target_qty = new_qty
+                                        print(f"[NormalBuy] Updated {current_ticker} qty to {new_qty} at ${new_price:.2f}")
+                                except Exception as e:
+                                    print(f"[NormalBuy] Recalc error for {current_ticker}: {e}")
+                                return None
+
+                            mon_result = monitor.monitor_until_fill_or_deadline(
+                                trade, ticker, on_check_callback=on_check
                             )
-                            ticker_result.escalated_to_market = True
-                            ticker_result.order_type_used = 'market'
-                            ticker_result.target_qty = new_qty
 
-                            filled = client.wait_for_fill(market_trade, timeout_seconds=60)
-                            if filled:
-                                fill_price = client.get_fill_price(market_trade)
-                                filled_qty = client.get_filled_qty(market_trade)
+                            if mon_result['filled']:
+                                fill_price = client.get_fill_price(mon_result['trade'])
+                                filled_qty = client.get_filled_qty(mon_result['trade'])
                                 ticker_result.filled_qty = filled_qty
                                 ticker_result.avg_fill_price = fill_price
                                 stamp_ticker_fill(ticker_result, tz)
-                                print(f"[NormalBuy] ORDER FILLED (market escalation): {ticker} - {filled_qty} @ {fill_price:.4f}")
+                                print(f"[NormalBuy] ORDER FILLED: {ticker} - {filled_qty} @ {fill_price:.4f}")
                                 _write_fill_notification(request.request_id, ticker_result, STATUS_DIR)
-
                                 print(f"[NormalBuy] Waiting {STOP_LOSS_DELAY}s before placing stop loss for {ticker}...")
                                 client.ib.sleep(STOP_LOSS_DELAY)
                                 stop_result = stop_mgr.place_stop_loss_now(
@@ -192,14 +192,169 @@ def execute(request: TradeRequest, client_id_offset: int = 0) -> ExecutionResult
                                 )
                                 ticker_result.stop_loss_placed = stop_result['success']
                                 ticker_result.stop_loss_price = stop_result['stop_price']
-                            else:
-                                ticker_result.error = "Market order did not fill within 60s"
-                                result.errors.append(f"{account_id}/{ticker}: Market order timeout")
-                        except Exception as e:
-                            ticker_result.error = f"Escalation failed: {e}"
-                            result.errors.append(f"{account_id}/{ticker}: {e}")
+
+                            elif mon_result['deadline_reached']:
+                                try:
+                                    new_price = client.get_current_price(ticker, request.exchange)
+                                    new_qty = calculate_buy_qty(
+                                        portfolio_value, available_cash, tp.fulfillment_pct, new_price, ticker
+                                    )
+                                    if new_qty <= 0:
+                                        new_qty = qty
+                                    market_trade = monitor.escalate_to_market(
+                                        mon_result['trade'], ticker, 'BUY', new_qty
+                                    )
+                                    ticker_result.escalated_to_market = True
+                                    ticker_result.order_type_used = 'market'
+                                    ticker_result.target_qty = new_qty
+                                    filled = client.wait_for_fill(market_trade, timeout_seconds=60)
+                                    if filled:
+                                        fill_price = client.get_fill_price(market_trade)
+                                        filled_qty = client.get_filled_qty(market_trade)
+                                        ticker_result.filled_qty = filled_qty
+                                        ticker_result.avg_fill_price = fill_price
+                                        stamp_ticker_fill(ticker_result, tz)
+                                        print(f"[NormalBuy] ORDER FILLED (market escalation): {ticker} - {filled_qty} @ {fill_price:.4f}")
+                                        _write_fill_notification(request.request_id, ticker_result, STATUS_DIR)
+                                        print(f"[NormalBuy] Waiting {STOP_LOSS_DELAY}s before placing stop loss for {ticker}...")
+                                        client.ib.sleep(STOP_LOSS_DELAY)
+                                        stop_result = stop_mgr.place_stop_loss_now(
+                                            ticker, filled_qty, fill_price,
+                                            tp.stop_type, tp.stop_fixed_price,
+                                        )
+                                        ticker_result.stop_loss_placed = stop_result['success']
+                                        ticker_result.stop_loss_price = stop_result['stop_price']
+                                    else:
+                                        ticker_result.error = "Market order did not fill within 60s"
+                                        result.errors.append(f"{account_id}/{ticker}: Market order timeout")
+                                except Exception as e:
+                                    ticker_result.error = f"Escalation failed: {e}"
+                                    result.errors.append(f"{account_id}/{ticker}: {e}")
+                        else:
+                            ticker_result.error = f"Calculated qty is 0 at threshold trigger (pv={portfolio_value:.2f}, pct={tp.fulfillment_pct}, price={current_price:.2f})"
 
                     account_result.ticker_results.append(ticker_result)
+
+                else:
+                    # ----------------------------------------------------------------
+                    # STANDARD ORDER TYPES: midprice / trailing_stop / market
+                    # ----------------------------------------------------------------
+                    # Get price and calculate qty
+                    price = client.get_current_price(ticker, request.exchange)
+                    qty = calculate_buy_qty(
+                        portfolio_value, available_cash, tp.fulfillment_pct, price, ticker
+                    )
+                    ticker_result.target_qty = qty
+
+                    if qty <= 0:
+                        ticker_result.error = f"Calculated qty is 0 (pv={portfolio_value:.2f}, pct={tp.fulfillment_pct}, price={price:.2f})"
+                        account_result.ticker_results.append(ticker_result)
+                    else:
+                        # Place initial order
+                        if tp.initial_order_type == 'midprice':
+                            trade = client.place_midprice_order(ticker, 'BUY', qty, request.exchange)
+                            ticker_result.order_type_used = 'midprice'
+                        elif tp.initial_order_type == 'trailing_stop':
+                            trade = client.place_trailing_stop_order(
+                                ticker, 'BUY', qty, tp.initial_trailing_pct, request.exchange
+                            )
+                            ticker_result.order_type_used = 'trailing_stop'
+                        else:
+                            trade = client.place_market_order(ticker, 'BUY', qty, request.exchange)
+                            ticker_result.order_type_used = 'market'
+
+                        # Set up monitor
+                        monitor = OrderMonitor(
+                            client, NORMAL_CHECK_INTERVAL, DURATION_BEFORE_CLOSE,
+                            request.exchange,
+                        )
+
+                        # Define recalculation callback
+                        def on_check(current_trade, current_ticker):
+                            nonlocal qty
+                            try:
+                                new_price = client.get_current_price(current_ticker, request.exchange)
+                                new_qty = calculate_buy_qty(
+                                    portfolio_value, available_cash, tp.fulfillment_pct, new_price, current_ticker
+                                )
+                                if new_qty != qty and new_qty > 0:
+                                    qty = new_qty
+                                    client.modify_order_qty(current_trade, new_qty)
+                                    ticker_result.target_qty = new_qty
+                                    print(f"[NormalBuy] Updated {current_ticker} qty to {new_qty} at ${new_price:.2f}")
+                            except Exception as e:
+                                print(f"[NormalBuy] Recalc error for {current_ticker}: {e}")
+                            return None
+
+                        # Monitor until fill or deadline
+                        mon_result = monitor.monitor_until_fill_or_deadline(
+                            trade, ticker, on_check_callback=on_check
+                        )
+
+                        if mon_result['filled']:
+                            # Filled successfully
+                            fill_price = client.get_fill_price(mon_result['trade'])
+                            filled_qty = client.get_filled_qty(mon_result['trade'])
+                            ticker_result.filled_qty = filled_qty
+                            ticker_result.avg_fill_price = fill_price
+                            stamp_ticker_fill(ticker_result, tz)
+                            print(f"[NormalBuy] ORDER FILLED: {ticker} - {filled_qty} @ {fill_price:.4f}")
+                            _write_fill_notification(request.request_id, ticker_result, STATUS_DIR)
+
+                            # Wait 15 min then place stop loss. Use ib.sleep() (not time.sleep())
+                            # so the asyncio event loop stays alive and the connection is maintained.
+                            print(f"[NormalBuy] Waiting {STOP_LOSS_DELAY}s before placing stop loss for {ticker}...")
+                            client.ib.sleep(STOP_LOSS_DELAY)
+                            stop_result = stop_mgr.place_stop_loss_now(
+                                ticker, filled_qty, fill_price,
+                                tp.stop_type, tp.stop_fixed_price,
+                            )
+                            ticker_result.stop_loss_placed = stop_result['success']
+                            ticker_result.stop_loss_price = stop_result['stop_price']
+
+                        elif mon_result['deadline_reached']:
+                            # Deadline: recalculate and escalate to market
+                            try:
+                                new_price = client.get_current_price(ticker, request.exchange)
+                                new_qty = calculate_buy_qty(
+                                    portfolio_value, available_cash, tp.fulfillment_pct, new_price, ticker
+                                )
+                                if new_qty <= 0:
+                                    new_qty = qty
+
+                                market_trade = monitor.escalate_to_market(
+                                    mon_result['trade'], ticker, 'BUY', new_qty
+                                )
+                                ticker_result.escalated_to_market = True
+                                ticker_result.order_type_used = 'market'
+                                ticker_result.target_qty = new_qty
+
+                                filled = client.wait_for_fill(market_trade, timeout_seconds=60)
+                                if filled:
+                                    fill_price = client.get_fill_price(market_trade)
+                                    filled_qty = client.get_filled_qty(market_trade)
+                                    ticker_result.filled_qty = filled_qty
+                                    ticker_result.avg_fill_price = fill_price
+                                    stamp_ticker_fill(ticker_result, tz)
+                                    print(f"[NormalBuy] ORDER FILLED (market escalation): {ticker} - {filled_qty} @ {fill_price:.4f}")
+                                    _write_fill_notification(request.request_id, ticker_result, STATUS_DIR)
+
+                                    print(f"[NormalBuy] Waiting {STOP_LOSS_DELAY}s before placing stop loss for {ticker}...")
+                                    client.ib.sleep(STOP_LOSS_DELAY)
+                                    stop_result = stop_mgr.place_stop_loss_now(
+                                        ticker, filled_qty, fill_price,
+                                        tp.stop_type, tp.stop_fixed_price,
+                                    )
+                                    ticker_result.stop_loss_placed = stop_result['success']
+                                    ticker_result.stop_loss_price = stop_result['stop_price']
+                                else:
+                                    ticker_result.error = "Market order did not fill within 60s"
+                                    result.errors.append(f"{account_id}/{ticker}: Market order timeout")
+                            except Exception as e:
+                                ticker_result.error = f"Escalation failed: {e}"
+                                result.errors.append(f"{account_id}/{ticker}: {e}")
+
+                        account_result.ticker_results.append(ticker_result)
 
             except InsufficientCashError as e:
                 ticker_result.error = str(e)
