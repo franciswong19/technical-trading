@@ -21,7 +21,7 @@ from trade_executor.config import (
     NORMAL_CHECK_INTERVAL, DURATION_BEFORE_CLOSE,
 )
 from trade_executor.models.request import TradeRequest
-from trade_executor.models.execution_result import ExecutionResult, AccountResult, TickerResult, stamp_ticker_completion
+from trade_executor.models.execution_result import ExecutionResult, AccountResult, TickerResult, stamp_ticker_fill, stamp_ticker_completion
 from trade_executor.ibkr_client import IBKRClient, IBKRConnectionError, OrderRejectedError
 from trade_executor.quantity_calculator import calculate_sell_qty
 from trade_executor.order_monitor import OrderMonitor
@@ -57,67 +57,165 @@ def execute(request: TradeRequest, client_id_offset: int = 0) -> ExecutionResult
             ticker_result = TickerResult(ticker=ticker, action='SELL')
 
             try:
-                # Get current holdings
-                holdings = client.get_position_qty(ticker)
-                qty = calculate_sell_qty(holdings, tp.fulfillment_pct, ticker)
-                ticker_result.target_qty = qty
-
-                if qty <= 0:
-                    ticker_result.error = f"No shares to sell (holdings={holdings}, pct={tp.fulfillment_pct})"
-                    account_result.ticker_results.append(ticker_result)
-                else:
-                    # Cancel any open orders for this ticker (e.g. stop-loss) before selling
-                    # to prevent IBKR from treating the combined sell orders as a short sale
-                    client.cancel_orders_for_ticker(ticker)
-
-                    # Place initial order
-                    if tp.initial_order_type == 'midprice':
-                        trade = client.place_midprice_order(ticker, 'SELL', qty, request.exchange)
-                        ticker_result.order_type_used = 'midprice'
-                    elif tp.initial_order_type == 'trailing_stop':
-                        trade = client.place_trailing_stop_order(
-                            ticker, 'SELL', qty, tp.initial_trailing_pct, request.exchange
-                        )
-                        ticker_result.order_type_used = 'trailing_stop'
-                    else:
-                        trade = client.place_market_order(ticker, 'SELL', qty, request.exchange)
-                        ticker_result.order_type_used = 'market'
-
-                    # Set up monitor
+                if tp.initial_order_type == 'trailing_stop_threshold':
+                    # ----------------------------------------------------------------
+                    # TRAILING STOP WITH THRESHOLD PRICE
+                    # Poll price every 10 min. Only place an order when price > threshold.
+                    # At the last check window (15 min before close):
+                    #   - condition met  → market order
+                    #   - condition not met → no order, exit
+                    # ----------------------------------------------------------------
+                    threshold_price = tp.initial_threshold_price
                     monitor = OrderMonitor(
                         client, NORMAL_CHECK_INTERVAL, DURATION_BEFORE_CLOSE,
                         request.exchange,
                     )
 
-                    # Monitor until fill or deadline
-                    mon_result = monitor.monitor_until_fill_or_deadline(trade, ticker)
+                    print(f"[NormalSell] Waiting for price > {threshold_price:.2f} before placing trailing stop for {ticker}...")
+                    threshold_result = monitor.wait_for_threshold_or_deadline(
+                        lambda: client.get_current_price(ticker, request.exchange),
+                        lambda p: p > threshold_price,
+                    )
+                    current_price = threshold_result['price']
 
-                    if mon_result['filled']:
-                        fill_price = client.get_fill_price(mon_result['trade'])
-                        filled_qty = client.get_filled_qty(mon_result['trade'])
-                        ticker_result.filled_qty = filled_qty
-                        ticker_result.avg_fill_price = fill_price
-                        print(f"[NormalSell] {ticker} sold: {filled_qty} @ ${fill_price:.2f}")
-
-                    elif mon_result['deadline_reached']:
-                        # Escalate to market
-                        market_trade = monitor.escalate_to_market(
-                            mon_result['trade'], ticker, 'SELL', qty
-                        )
-                        ticker_result.escalated_to_market = True
-                        ticker_result.order_type_used = 'market'
-
-                        filled = client.wait_for_fill(market_trade, timeout_seconds=60)
-                        if filled:
-                            fill_price = client.get_fill_price(market_trade)
-                            filled_qty = client.get_filled_qty(market_trade)
-                            ticker_result.filled_qty = filled_qty
-                            ticker_result.avg_fill_price = fill_price
+                    if threshold_result['near_deadline']:
+                        if threshold_result['condition_met']:
+                            # Last check, condition met → market sell
+                            print(f"[NormalSell] Last check: price={current_price:.2f} > threshold={threshold_price:.2f}, placing market order for {ticker}")
+                            holdings = client.get_position_qty(ticker)
+                            qty = calculate_sell_qty(holdings, tp.fulfillment_pct, ticker)
+                            ticker_result.target_qty = qty
+                            if qty > 0:
+                                client.cancel_orders_for_ticker(ticker)
+                                market_trade = client.place_market_order(ticker, 'SELL', qty, request.exchange)
+                                ticker_result.order_type_used = 'market'
+                                ticker_result.escalated_to_market = True
+                                filled = client.wait_for_fill(market_trade, timeout_seconds=60)
+                                if filled:
+                                    fill_price = client.get_fill_price(market_trade)
+                                    filled_qty = client.get_filled_qty(market_trade)
+                                    ticker_result.filled_qty = filled_qty
+                                    ticker_result.avg_fill_price = fill_price
+                                    stamp_ticker_fill(ticker_result, tz)
+                                    print(f"[NormalSell] ORDER FILLED (threshold market): {ticker} - {filled_qty} @ {fill_price:.4f}")
+                                else:
+                                    ticker_result.error = "Market order did not fill within 60s"
+                                    result.errors.append(f"{account_id}/{ticker}: Market order timeout")
+                            else:
+                                ticker_result.error = f"No shares to sell at threshold trigger (holdings={holdings}, pct={tp.fulfillment_pct})"
                         else:
-                            ticker_result.error = "Market order did not fill within 60s"
-                            result.errors.append(f"{account_id}/{ticker}: Market order timeout")
+                            # Last check, condition not met → no order placed
+                            print(f"[NormalSell] Threshold not met at deadline for {ticker} (price={current_price:.2f} <= threshold={threshold_price:.2f}), no order placed")
+                            ticker_result.error = f"Threshold not met at deadline (price={current_price:.2f} <= threshold={threshold_price:.2f})"
+                    else:
+                        # Condition met before deadline → place trailing stop and monitor normally
+                        print(f"[NormalSell] Threshold met: price={current_price:.2f} > {threshold_price:.2f}, placing trailing stop for {ticker}")
+                        holdings = client.get_position_qty(ticker)
+                        qty = calculate_sell_qty(holdings, tp.fulfillment_pct, ticker)
+                        ticker_result.target_qty = qty
+                        if qty > 0:
+                            client.cancel_orders_for_ticker(ticker)
+                            trade = client.place_trailing_stop_order(
+                                ticker, 'SELL', qty, tp.initial_trailing_pct, request.exchange
+                            )
+                            ticker_result.order_type_used = 'trailing_stop'
+
+                            mon_result = monitor.monitor_until_fill_or_deadline(trade, ticker)
+
+                            if mon_result['filled']:
+                                fill_price = client.get_fill_price(mon_result['trade'])
+                                filled_qty = client.get_filled_qty(mon_result['trade'])
+                                ticker_result.filled_qty = filled_qty
+                                ticker_result.avg_fill_price = fill_price
+                                stamp_ticker_fill(ticker_result, tz)
+                                print(f"[NormalSell] {ticker} sold: {filled_qty} @ ${fill_price:.4f}")
+
+                            elif mon_result['deadline_reached']:
+                                market_trade = monitor.escalate_to_market(
+                                    mon_result['trade'], ticker, 'SELL', qty
+                                )
+                                ticker_result.escalated_to_market = True
+                                ticker_result.order_type_used = 'market'
+                                filled = client.wait_for_fill(market_trade, timeout_seconds=60)
+                                if filled:
+                                    fill_price = client.get_fill_price(market_trade)
+                                    filled_qty = client.get_filled_qty(market_trade)
+                                    ticker_result.filled_qty = filled_qty
+                                    ticker_result.avg_fill_price = fill_price
+                                    stamp_ticker_fill(ticker_result, tz)
+                                else:
+                                    ticker_result.error = "Market order did not fill within 60s"
+                                    result.errors.append(f"{account_id}/{ticker}: Market order timeout")
+                        else:
+                            ticker_result.error = f"No shares to sell at threshold trigger (holdings={holdings}, pct={tp.fulfillment_pct})"
 
                     account_result.ticker_results.append(ticker_result)
+
+                else:
+                    # ----------------------------------------------------------------
+                    # STANDARD ORDER TYPES: midprice / trailing_stop / market
+                    # ----------------------------------------------------------------
+                    # Get current holdings
+                    holdings = client.get_position_qty(ticker)
+                    qty = calculate_sell_qty(holdings, tp.fulfillment_pct, ticker)
+                    ticker_result.target_qty = qty
+
+                    if qty <= 0:
+                        ticker_result.error = f"No shares to sell (holdings={holdings}, pct={tp.fulfillment_pct})"
+                        account_result.ticker_results.append(ticker_result)
+                    else:
+                        # Cancel any open orders for this ticker (e.g. stop-loss) before selling
+                        # to prevent IBKR from treating the combined sell orders as a short sale
+                        client.cancel_orders_for_ticker(ticker)
+
+                        # Place initial order
+                        if tp.initial_order_type == 'midprice':
+                            trade = client.place_midprice_order(ticker, 'SELL', qty, request.exchange)
+                            ticker_result.order_type_used = 'midprice'
+                        elif tp.initial_order_type == 'trailing_stop':
+                            trade = client.place_trailing_stop_order(
+                                ticker, 'SELL', qty, tp.initial_trailing_pct, request.exchange
+                            )
+                            ticker_result.order_type_used = 'trailing_stop'
+                        else:
+                            trade = client.place_market_order(ticker, 'SELL', qty, request.exchange)
+                            ticker_result.order_type_used = 'market'
+
+                        # Set up monitor
+                        monitor = OrderMonitor(
+                            client, NORMAL_CHECK_INTERVAL, DURATION_BEFORE_CLOSE,
+                            request.exchange,
+                        )
+
+                        # Monitor until fill or deadline
+                        mon_result = monitor.monitor_until_fill_or_deadline(trade, ticker)
+
+                        if mon_result['filled']:
+                            fill_price = client.get_fill_price(mon_result['trade'])
+                            filled_qty = client.get_filled_qty(mon_result['trade'])
+                            ticker_result.filled_qty = filled_qty
+                            ticker_result.avg_fill_price = fill_price
+                            print(f"[NormalSell] {ticker} sold: {filled_qty} @ ${fill_price:.2f}")
+
+                        elif mon_result['deadline_reached']:
+                            # Escalate to market
+                            market_trade = monitor.escalate_to_market(
+                                mon_result['trade'], ticker, 'SELL', qty
+                            )
+                            ticker_result.escalated_to_market = True
+                            ticker_result.order_type_used = 'market'
+
+                            filled = client.wait_for_fill(market_trade, timeout_seconds=60)
+                            if filled:
+                                fill_price = client.get_fill_price(market_trade)
+                                filled_qty = client.get_filled_qty(market_trade)
+                                ticker_result.filled_qty = filled_qty
+                                ticker_result.avg_fill_price = fill_price
+                            else:
+                                ticker_result.error = "Market order did not fill within 60s"
+                                result.errors.append(f"{account_id}/{ticker}: Market order timeout")
+
+                        account_result.ticker_results.append(ticker_result)
 
             except OrderRejectedError as e:
                 ticker_result.error = str(e)

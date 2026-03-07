@@ -17,6 +17,7 @@ class TickerParams:
     fulfillment_pct: float                         # 0.01 to 1.0 (1% to 100%)
     initial_order_type: str                        # 'market' / 'midprice' / 'trailing_stop'
     initial_trailing_pct: Optional[float] = None   # If initial order is trailing stop (e.g. 1.5)
+    initial_threshold_price: Optional[float] = None  # If initial_order_type='trailing_stop_threshold'
     subsequent_order_type: Optional[str] = None    # HOT POTATO only: 'trailing_stop'
     subsequent_trailing_pct: Optional[float] = None  # HOT POTATO only: trailing stop %
     stop_type: Optional[str] = None                # 'NORMAL' / 'HEIGHTENED' / 'FIXED_PRICE' / 'ADHOC'

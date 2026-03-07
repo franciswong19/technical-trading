@@ -16,7 +16,7 @@ Duration: XX MINS
 --- Ticker ---
 Ticker:
 Fulfillment: <1% - 100%>
-Initial Order type: midprice / trailing stop at X.X%
+Initial Order type: midprice / trailing stop at X.X% / trailing stop at X.X% with threshold price XX.XX
 Subsequent Order type: trailing stop at X.X%
 Stop type: ADHOC trailing stop at X.X%
 Cycle threshold: <number, default 3>
@@ -32,7 +32,10 @@ Then tell the user:
   - BUY / SELL — cycle buys during session, go **flat before close** (no overnight exposure)
   - SELL / SELL — cycle sells/reduce during session, end **flat**
   - SELL / BUY — cycle sells during session, **buy back** to ensure holding at close
-- **Initial Order type**: the order used to enter the position (midprice or trailing stop).
+- **Initial Order type**: the order used to enter the position on cycle 0:
+  - `midprice` = place midprice order immediately
+  - `trailing stop at X.X%` = place trailing stop immediately
+  - `trailing stop at X.X% with threshold price XX.XX` = for BUY, only place trailing stop once price drops below XX.XX; for SELL, once price rises above XX.XX; at the timed deadline if condition is met a market order is placed; only applies to cycle 0 — subsequent cycles always use the Subsequent Order type directly
 - **Subsequent Order type**: the trailing stop used to exit/re-enter on each cycle — this is **required**.
 - **Stop type**: the ADHOC trailing stop percentage that acts as the hard stop loss for the whole session (e.g. ADHOC trailing stop at 2.5%).
 - **Cycle threshold**: how many cycles before stopping (default is 3 if omitted).

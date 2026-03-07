@@ -49,7 +49,7 @@ Apply these rules:
 | Transaction | SELL | BUY | SELL | BUY | SELL | BUY or SELL |
 | Transaction before close | N/A | N/A | N/A | N/A | N/A | BUY or SELL (required — may differ from Transaction) |
 | Fulfillment | 100% (fixed) | 1%-100% | 1%-100% | 1%-100% | 1%-100% | 1%-100% |
-| Initial order | Market (fixed) | Midprice or Trailing Stop | Midprice or Trailing Stop | Midprice (fixed) | Midprice (fixed) | Midprice or Trailing Stop |
+| Initial order | Market (fixed) | Midprice, Trailing Stop, or Trailing Stop Threshold | Midprice, Trailing Stop, or Trailing Stop Threshold | Midprice (fixed) | Midprice (fixed) | Midprice, Trailing Stop, or Trailing Stop Threshold |
 | Subsequent order | N/A | N/A | N/A | N/A | N/A | Trailing Stop (required) |
 | Stop type | N/A | NORMAL or HEIGHTENED or FIXED PRICE | N/A | NORMAL or HEIGHTENED or FIXED PRICE | N/A | ADHOC trailing % |
 | Duration | IMMED | BEFORE CLOSE | BEFORE CLOSE | XX MINS (>=3) | XX MINS (>=3) | XX MINS (>=3) |
@@ -82,8 +82,9 @@ Run: `python3 -c "from trade_executor.request_id import generate_request_id; pri
    |-------|------|-------|
    | `ticker` | str | e.g. `'TQQQ'` |
    | `fulfillment_pct` | float | 0.01–1.0 (e.g. `0.10` for 10%) |
-   | `initial_order_type` | str | `'market'` / `'midprice'` / `'trailing_stop'` |
-   | `initial_trailing_pct` | float or None | Required if `initial_order_type='trailing_stop'` |
+   | `initial_order_type` | str | `'market'` / `'midprice'` / `'trailing_stop'` / `'trailing_stop_threshold'` |
+   | `initial_trailing_pct` | float or None | Required if `initial_order_type='trailing_stop'` or `'trailing_stop_threshold'` |
+   | `initial_threshold_price` | float or None | Required if `initial_order_type='trailing_stop_threshold'` |
    | `subsequent_order_type` | str or None | HOT POTATO only: `'trailing_stop'` |
    | `subsequent_trailing_pct` | float or None | HOT POTATO only |
    | `stop_type` | str or None | `'NORMAL'` / `'HEIGHTENED'` / `'FIXED_PRICE'` / `'ADHOC'` |
@@ -160,6 +161,34 @@ Run: `python3 -c "from trade_executor.request_id import generate_request_id; pri
    "
    ```
 
+   Example (NORMAL BUY with trailing stop threshold — only place order if price drops below 20.50):
+   ```python
+   python3 -c "
+   from trade_executor.models.request import TradeRequest, TickerParams
+   req = TradeRequest(
+       request_id='20260227-003',
+       accounts=[{'alias': 'U1234567', 'account_id': 'U1234567', 'port': 4001}],
+       exchange='US',
+       request_type='NORMAL_BUY',
+       transaction_type='BUY',
+       duration_type='BEFORE_CLOSE',
+       duration_minutes=None,
+       ticker_params=[
+           TickerParams(
+               ticker='TQQQ',
+               fulfillment_pct=0.10,
+               initial_order_type='trailing_stop_threshold',
+               initial_trailing_pct=0.8,
+               initial_threshold_price=20.50,
+               stop_type='NORMAL',
+           )
+       ],
+   )
+   req.to_json('trade_executor/state/requests/20260227-003-TQQQ.json')
+   print('Written.')
+   "
+   ```
+
 ### Step 5: Pre-Confirmation Preview
 **Skip this step for SELL EVERYTHING NOW** (speed is paramount).
 
@@ -215,6 +244,7 @@ Ticker Details:
   [TICKER]: [fulfillment%], [order type], stop=[stop type]
             Est. price: ~$XX.XX | Qty: XX | Est. value: ~$X,XXX.XX
             Est. stop loss: ~$XX.XX (if BUY)
+            Threshold: $XX.XX (trigger condition: price [</>] threshold) (if trailing_stop_threshold)
   ...
 
 NOTE: Prices are estimates and will be recalculated at execution time.
@@ -320,6 +350,14 @@ Results:
   ...
 ==================
 ```
+
+## Initial Order Type Reference
+- **midprice**: Place a midprice limit order immediately on entry.
+- **trailing stop at X.X%**: Place a trailing stop order immediately on entry.
+- **trailing stop at X.X% with threshold price XX.XX**: Wait for price to cross the threshold before placing an order. Check every 10 minutes:
+  - BUY: if `current_price < threshold_price` → place trailing stop; at the deadline itself (3:45 PM / exchange cutoff for NORMAL; at the timed deadline for HOT POTATO), if a trailing stop is active but unfilled → escalate to market; if no order yet and condition is met → place market order; if condition not met at deadline → no order.
+  - SELL: same logic but condition is `current_price > threshold_price`.
+  - **Not supported** for FAST BUY, FAST SELL, or SELL EVERYTHING NOW — stop and tell the user if requested.
 
 ## Stop Type Reference
 - **NORMAL**: Stop loss at 8% below buy price

@@ -123,6 +123,41 @@ class OrderMonitor:
         new_trade = self.client.place_market_order(ticker, action, qty, self.exchange)
         return new_trade
 
+    def wait_for_threshold_or_deadline(self, get_price_fn, condition_fn) -> dict:
+        """
+        Poll price at check_interval until condition is met or we are near the deadline.
+
+        Used for 'trailing_stop_threshold' initial order type: waits for the price
+        threshold condition to be satisfied before placing an order.
+
+        Args:
+            get_price_fn: Callable that returns the current price (float)
+            condition_fn: Callable(price) -> bool, True when order should be placed
+
+        Returns:
+            dict: {
+                'condition_met': bool,   -- True if condition_fn returned True
+                'near_deadline': bool,   -- True if within check_interval of deadline
+                'price': float,          -- Most recent price fetched
+            }
+        If both condition_met and near_deadline are True, treat as last-check → market order.
+        """
+        while True:
+            price = get_price_fn()
+            near_deadline = self._is_near_deadline(buffer_seconds=60)
+            condition_met = condition_fn(price)
+
+            if condition_met or near_deadline:
+                return {
+                    'condition_met': condition_met,
+                    'near_deadline': near_deadline,
+                    'price': price,
+                }
+
+            # Condition not met, not near deadline — sleep and retry
+            for _ in range(self.check_interval):
+                self.client.ib.sleep(1)
+
     def wait_for_stop_trigger(self, stop_trades: list,
                               check_interval: int = 300) -> dict:
         """Monitor multiple stop orders and detect which triggers first.

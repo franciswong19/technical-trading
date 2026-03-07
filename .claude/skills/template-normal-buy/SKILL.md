@@ -14,13 +14,13 @@ Duration: BEFORE CLOSE
 --- Ticker 1 ---
 Ticker:
 Fulfillment: <1% - 100%>
-Initial Order type: midprice / trailing stop at X.X%
+Initial Order type: midprice / trailing stop at X.X% / trailing stop at X.X% with threshold price XX.XX
 Stop type: NORMAL / HEIGHTENED / FIXED PRICE AT XX.XX
 
 --- Ticker 2 ---
 Ticker:
 Fulfillment: <1% - 100%>
-Initial Order type: midprice / trailing stop at X.X%
+Initial Order type: midprice / trailing stop at X.X% / trailing stop at X.X% with threshold price XX.XX
 Stop type: NORMAL / HEIGHTENED / FIXED PRICE AT XX.XX
 ```
 
@@ -29,6 +29,10 @@ Then tell the user:
 - For multiple accounts, separate with commas (e.g. U11871718, U13868670).
 - **Fixed defaults (do not specify):** Transaction type = BUY, Duration = BEFORE CLOSE.
 - **Not applicable:** Subsequent order type, Cycle threshold.
+- **Initial order type reference:**
+  - `midprice` = place a midprice limit order immediately
+  - `trailing stop at X.X%` = place a trailing stop immediately (replace X.X with percentage)
+  - `trailing stop at X.X% with threshold price XX.XX` = only place a trailing stop once price drops **below** XX.XX; at the 3:45 PM deadline if price is below XX.XX a market order is placed instead; if price never drops below XX.XX no order is placed
 - **Stop type reference:**
   - NORMAL = stop loss placed 8% below the fill price
   - HEIGHTENED = stop loss placed 3% below the fill price
