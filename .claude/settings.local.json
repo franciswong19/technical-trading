@@ -16,7 +16,8 @@
       "Bash(taskkill:*)",
       "Bash(cmd:*)",
       "Bash(ls:*)",
-      "Bash(git remote:*)"
+      "Bash(git remote:*)",
+      "Bash(mkdir:*)"
     ]
   }
 }

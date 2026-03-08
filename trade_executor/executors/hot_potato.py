@@ -473,6 +473,14 @@ def main():
     os.makedirs(RESULTS_DIR, exist_ok=True)
     os.makedirs(STATUS_DIR, exist_ok=True)
 
+    clientids = {
+        account['account_id']: BASE_CLIENT_ID + i
+        for i, account in enumerate(request.accounts)
+    }
+    clientids_path = os.path.join(STATUS_DIR, f"{request.request_id}.clientids.json")
+    with open(clientids_path, 'w') as f:
+        json.dump(clientids, f)
+
     result = execute(request)
     result.to_json(result_path)
     print(f"\n[HotPotato] Result written to {result_path}")

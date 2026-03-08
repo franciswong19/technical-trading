@@ -21,6 +21,10 @@ Account IDs (e.g. `U1234567`) are provided directly by the user in the trade req
 5. **FAST SELL** - Time-limited sell with 1-min monitoring, midprice
 6. **HOT POTATO** - Cycle-based buy/sell with dual stops, single ticker
 
+## Available Skills
+- `/abort-specific-requests` - Abort one or more in-flight requests by ID
+- `/abort-all-requests` - Abort ALL in-flight requests
+
 ## Workflow
 
 ### Step 0: Extract Account IDs from Request
@@ -375,6 +379,26 @@ Results:
 7. If executor crashes without result file, report **CRITICAL ALERT**
 8. Verify cash sufficiency before BUY orders
 9. Verify market hours before placing orders
+
+## Abort Workflow
+
+When the user invokes `/abort-specific-requests` or `/abort-all-requests`:
+
+### Step A: Kill Executor Tasks
+Use `TaskList` to find running executor tasks. Match by task description containing:
+- The request ID (for specific abort), or
+- Any of: `normal_buy`, `normal_sell`, `fast_buy`, `fast_sell`, `hot_potato`, `sell_everything` (for abort all)
+
+Call `TaskStop` on each matching task.
+
+### Step B: Cancel IBKR Orders
+For specific: `python -m trade_executor.abort --request-ids <ID1> [ID2 ...]`
+For all: `python -m trade_executor.abort --all`
+
+### Step C: Report
+Show which tasks were stopped, which orders were cancelled per account per ticker, and any errors.
+
+Note: Entry orders (unfilled buys/sells) are cancelled. All stop-loss orders are **preserved** — including ones from previous days. SELL_EVERYTHING_NOW requests are skipped (cannot be aborted) — tell the user to manage those manually in IB Gateway. After aborting, the script queries all remaining open orders on IBKR and prints an "Active orders still on IBKR" section. Surface this to the user with full details (ticker, action, order type, price, order ID). If the script annotated an order with `[today: <request_id>]`, include that request ID in the report so the user knows which of today's requests it belongs to. Make clear all remaining orders are valid and continue protecting positions.
 
 ## Reference Documents
 - Execution lifecycle details: `agent_docs/execution_agent.md`
