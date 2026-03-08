@@ -12,6 +12,7 @@ Same as NORMAL SELL but with:
 import argparse
 import sys
 import os
+import json
 from datetime import datetime
 
 import pytz
@@ -149,6 +150,15 @@ def main():
 
     os.makedirs(RESULTS_DIR, exist_ok=True)
     os.makedirs(STATUS_DIR, exist_ok=True)
+
+    ticker = request.ticker_params[0].ticker
+    clientids = {
+        account['account_id']: BASE_CLIENT_ID + args.client_id_offset + i
+        for i, account in enumerate(request.accounts)
+    }
+    clientids_path = os.path.join(STATUS_DIR, f"{request.request_id}-{ticker}.clientids.json")
+    with open(clientids_path, 'w') as f:
+        json.dump(clientids, f)
 
     result = execute(request, client_id_offset=args.client_id_offset)
     result.to_json(result_path)
