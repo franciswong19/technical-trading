@@ -6,7 +6,7 @@ description: Print the NORMAL BUY request template — standard buy with 10-min 
 Print the following template exactly as shown:
 
 ```
-Trading account:
+Trading account: <account_id (port XXXX)>
 Exchange: US / XETRA / EURONEXT
 Request type: NORMAL BUY
 Duration: BEFORE CLOSE
@@ -26,7 +26,7 @@ Stop type: NORMAL / HEIGHTENED / FIXED PRICE AT XX.XX
 
 Then tell the user:
 - Add or remove ticker blocks as needed. Multiple tickers are supported.
-- For multiple accounts, separate with commas (e.g. U11871718, U13868670).
+- For multiple accounts, separate with commas (e.g. U1234567 (port 4001), U8765432 (port 4003)).
 - **Fixed defaults (do not specify):** Transaction type = BUY, Duration = BEFORE CLOSE.
 - **Not applicable:** Subsequent order type, Cycle threshold.
 - **Initial order type reference:**
