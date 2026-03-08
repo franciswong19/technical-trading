@@ -16,7 +16,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from trade_executor.config import (
-    ACCOUNTS, BASE_CLIENT_ID, EXCHANGES,
+    BASE_CLIENT_ID, EXCHANGES,
     STOP_NORMAL_PCT, STOP_HEIGHTENED_PCT,
     REQUEST_SELL_EVERYTHING_NOW,
 )

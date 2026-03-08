@@ -22,7 +22,7 @@ Written by the main agent to `trade_executor/state/requests/<request_id>.json`:
 ```json
 {
   "request_id": "20260218-001",
-  "accounts": [{"alias": "LIVE-US", "account_id": "U13868670", "port": 7496}],
+  "accounts": [{"alias": "U13868670", "account_id": "U13868670", "port": 4001}],
   "exchange": "US",
   "ticker_params": [{
     "ticker": "AAPL",
