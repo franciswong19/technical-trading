@@ -118,6 +118,7 @@ STOP_HEIGHTENED_PCT = 0.03  # 3% below buy price
 NORMAL_CHECK_INTERVAL = 600   # 10 minutes
 FAST_CHECK_INTERVAL = 60      # 1 minute
 HOT_POTATO_STOP_CHECK_INTERVAL = 300  # 5 minutes (for monitoring stop triggers)
+THRESHOLD_CHECK_INTERVAL = 300  # 5 minutes (for trailing_stop_threshold activation polling)
 
 # ==========================================
 # STOP LOSS DELAY

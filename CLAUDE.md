@@ -51,7 +51,7 @@ Apply these rules:
 | Initial order | Market (fixed) | Midprice, Trailing Stop, or Trailing Stop Threshold | Midprice, Trailing Stop, or Trailing Stop Threshold | Midprice (fixed) | Midprice (fixed) | Midprice, Trailing Stop, or Trailing Stop Threshold |
 | Subsequent order | N/A | N/A | N/A | N/A | N/A | Trailing Stop (required) |
 | Stop type | N/A | NORMAL or HEIGHTENED or FIXED PRICE | N/A | NORMAL or HEIGHTENED or FIXED PRICE | N/A | ADHOC trailing % |
-| Duration | IMMED | BEFORE CLOSE | BEFORE CLOSE | XX MINS (>=3) | XX MINS (>=3) | XX MINS (>=3) |
+| Duration | IMMED | BEFORE CLOSE | BEFORE CLOSE | XX MINS (>=3) | XX MINS (>=3) | BEFORE CLOSE |
 | Cycle threshold | N/A | N/A | N/A | N/A | N/A | Default 3 |
 
 If validation fails, tell the user what's wrong and ask for correction.
@@ -140,8 +140,8 @@ Run: `python3 -c "from trade_executor.request_id import generate_request_id; pri
        request_type='HOT_POTATO',
        transaction_type='BUY',
        transaction_type_before_close='BUY',
-       duration_type='TIMED',
-       duration_minutes=60,
+       duration_type='BEFORE_CLOSE',
+       duration_minutes=None,
        ticker_params=[
            TickerParams(
                ticker='TQQQ',

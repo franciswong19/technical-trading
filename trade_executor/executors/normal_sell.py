@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 from trade_executor.config import (
     BASE_CLIENT_ID, EXCHANGES, RESULTS_DIR, STATUS_DIR,
-    NORMAL_CHECK_INTERVAL, DURATION_BEFORE_CLOSE,
+    NORMAL_CHECK_INTERVAL, THRESHOLD_CHECK_INTERVAL, DURATION_BEFORE_CLOSE,
 )
 from trade_executor.models.request import TradeRequest
 from trade_executor.models.execution_result import ExecutionResult, AccountResult, TickerResult, stamp_ticker_fill, stamp_ticker_completion
@@ -68,7 +68,7 @@ def execute(request: TradeRequest, client_id_offset: int = 0) -> ExecutionResult
                     # ----------------------------------------------------------------
                     threshold_price = tp.initial_threshold_price
                     monitor = OrderMonitor(
-                        client, NORMAL_CHECK_INTERVAL, DURATION_BEFORE_CLOSE,
+                        client, THRESHOLD_CHECK_INTERVAL, DURATION_BEFORE_CLOSE,
                         request.exchange,
                     )
 
