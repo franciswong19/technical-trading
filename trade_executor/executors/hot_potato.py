@@ -26,8 +26,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 from trade_executor.config import (
     BASE_CLIENT_ID, EXCHANGES, RESULTS_DIR, STATUS_DIR,
-    FAST_CHECK_INTERVAL, HOT_POTATO_STOP_CHECK_INTERVAL,
-    DURATION_TIMED, DEFAULT_CYCLE_THRESHOLD, STOP_LOSS_DELAY,
+    FAST_CHECK_INTERVAL, NORMAL_CHECK_INTERVAL, THRESHOLD_CHECK_INTERVAL, HOT_POTATO_STOP_CHECK_INTERVAL,
+    DURATION_BEFORE_CLOSE, DEFAULT_CYCLE_THRESHOLD, STOP_LOSS_DELAY,
 )
 from trade_executor.models.request import TradeRequest
 from trade_executor.models.execution_result import ExecutionResult, AccountResult, TickerResult, stamp_ticker_fill, stamp_ticker_completion
@@ -101,8 +101,8 @@ def execute(request: TradeRequest) -> ExecutionResult:
 
             # Compute the exchange cutoff time
             cutoff_monitor = OrderMonitor(
-                client, FAST_CHECK_INTERVAL, DURATION_TIMED,
-                request.exchange, deadline_minutes=request.duration_minutes,
+                client, FAST_CHECK_INTERVAL, DURATION_BEFORE_CLOSE,
+                request.exchange,
             )
             deadline = cutoff_monitor.get_deadline()
 
@@ -154,10 +154,9 @@ def execute(request: TradeRequest) -> ExecutionResult:
                         condition = (lambda p: p < threshold_price) if is_buy else (lambda p: p > threshold_price)
                         direction_desc = f"< {threshold_price:.2f}" if is_buy else f"> {threshold_price:.2f}"
 
-                        remaining_mins = max(1, int((deadline - datetime.now(tz)).total_seconds() / 60))
                         threshold_monitor = OrderMonitor(
-                            client, NORMAL_CHECK_INTERVAL, DURATION_TIMED,
-                            request.exchange, deadline_minutes=remaining_mins,
+                            client, THRESHOLD_CHECK_INTERVAL, DURATION_BEFORE_CLOSE,
+                            request.exchange,
                         )
 
                         print(f"[HotPotato] Cycle {seq_num}: waiting for price {direction_desc} before placing trailing stop for {ticker}...")
@@ -218,10 +217,9 @@ def execute(request: TradeRequest) -> ExecutionResult:
                             )
                             ticker_result.order_type_used = 'trailing_stop'
 
-                            remaining_mins = max(1, int((deadline - datetime.now(tz)).total_seconds() / 60))
                             fill_monitor = OrderMonitor(
-                                client, FAST_CHECK_INTERVAL, DURATION_TIMED,
-                                request.exchange, deadline_minutes=remaining_mins,
+                                client, FAST_CHECK_INTERVAL, DURATION_BEFORE_CLOSE,
+                                request.exchange,
                             )
                             mon_result = fill_monitor.monitor_until_fill_or_deadline(trade, ticker)
 
@@ -252,10 +250,9 @@ def execute(request: TradeRequest) -> ExecutionResult:
                             ticker_result.order_type_used = 'market'
 
                         # Monitor for fill (1 min interval, escalate 1 min before deadline)
-                        remaining_mins = max(1, int((deadline - datetime.now(tz)).total_seconds() / 60))
                         fill_monitor = OrderMonitor(
-                            client, FAST_CHECK_INTERVAL, DURATION_TIMED,
-                            request.exchange, deadline_minutes=remaining_mins,
+                            client, FAST_CHECK_INTERVAL, DURATION_BEFORE_CLOSE,
+                            request.exchange,
                         )
 
                         mon_result = fill_monitor.monitor_until_fill_or_deadline(trade, ticker)
@@ -338,10 +335,9 @@ def execute(request: TradeRequest) -> ExecutionResult:
                     if stop_result['trailing_stop_trade']:
                         stop_trades.append({'name': 'trailing', 'trade': stop_result['trailing_stop_trade']})
 
-                    remaining_mins = max(1, int((deadline - datetime.now(tz)).total_seconds() / 60))
                     stop_monitor = OrderMonitor(
-                        client, HOT_POTATO_STOP_CHECK_INTERVAL, DURATION_TIMED,
-                        request.exchange, deadline_minutes=remaining_mins,
+                        client, HOT_POTATO_STOP_CHECK_INTERVAL, DURATION_BEFORE_CLOSE,
+                        request.exchange,
                     )
 
                     trigger_result = stop_monitor.wait_for_stop_trigger(stop_trades)
