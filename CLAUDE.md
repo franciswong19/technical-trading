@@ -295,15 +295,21 @@ If the process crashes without a result file, report **CRITICAL ALERT**.
 Launch ALL ticker executors simultaneously in the background, each with a unique `--client-id-offset` to avoid IBKR client ID collisions:
 ```
 For tickers [T0, T1, T2, ...] with N accounts:
-  Assign --client-id-offset = T_index * N  (0-based ticker index × number of accounts)
+  seq_num = int(request_id.split('-')[1])   # e.g. "20260313-002" → 2
+  Assign --client-id-offset = (seq_num - 1) * 20 + T_index * N
 
-  Example (2 tickers, 1 account):
-    T0 (TQQQ): offset=0 → client_id = BASE + 0 + account_i
-    T1 (AMZN): offset=1 → client_id = BASE + 1 + account_i
+  Reserves 20 client IDs per request slot (supports ≤10 tickers × 2 accounts per request).
+  Safe for up to 24 requests/day before reaching preview range (500+).
 
-  Example (2 tickers, 2 accounts):
-    T0 (TQQQ): offset=0 → acct 0: BASE+0, acct 1: BASE+1
-    T1 (AMZN): offset=2 → acct 0: BASE+2, acct 1: BASE+3
+  Example (request 20260313-002, 2 tickers, 1 account):
+    seq_num=2, base=(2-1)*20=20
+    T0 (TQQQ): offset=20 → client_id = BASE + 20 + account_i
+    T1 (AMZN): offset=21 → client_id = BASE + 21 + account_i
+
+  Example (request 20260313-003, 2 tickers, 2 accounts):
+    seq_num=3, base=(3-1)*20=40
+    T0 (TQQQ): offset=40 → acct 0: BASE+40, acct 1: BASE+41
+    T1 (AMZN): offset=42 → acct 0: BASE+42, acct 1: BASE+43
 
 Launch ALL in background simultaneously:
   python3 -m trade_executor.executors.<type> --request trade_executor/state/requests/<request_id>-<TICKER>.json --client-id-offset <offset>

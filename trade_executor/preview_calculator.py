@@ -59,7 +59,7 @@ def generate_preview(request: TradeRequest) -> dict:
         account_id = acct['account_id']
         port = acct['port']
         alias = acct.get('alias', account_id)
-        client_id = BASE_CLIENT_ID + 50 + idx  # Offset to avoid conflicts
+        client_id = BASE_CLIENT_ID + 500 + idx  # Offset to avoid conflicts with executor range
 
         acct_result = {
             "account_id": account_id,

@@ -24,7 +24,7 @@ from trade_executor.ibkr_client import IBKRClient, IBKRConnectionError
 from trade_executor.models.request import TradeRequest
 from trade_executor.models.execution_result import ExecutionResult
 
-SNAPSHOT_CLIENT_ID = 99  # Used only for the final remaining-orders snapshot
+SNAPSHOT_CLIENT_ID = 599  # Used only for the final remaining-orders snapshot
 
 
 def get_base_request_id(filepath: str) -> str:
