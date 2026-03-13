@@ -51,19 +51,27 @@ class IBKRClient:
         Raises:
             IBKRConnectionError: If connection fails
         """
-        try:
-            self.ib.connect(self.host, self.port, clientId=self.client_id, timeout=5)
-            print(f"[IBKR] Connected: account={self.account_id}, port={self.port}, clientId={self.client_id}")
-            # Pull in orders from all sessions — without this, openTrades() only
-            # reflects orders placed by this specific API client_id.
-            self.ib.reqAllOpenOrders()
-            self.ib.sleep(1)
-            print(f"[IBKR] All open orders synced ({len(self.ib.openTrades())} open trades visible)")
-        except Exception as e:
-            raise IBKRConnectionError(
-                f"Failed to connect to IBKR at {self.host}:{self.port} "
-                f"(clientId={self.client_id}): {e}"
-            )
+        import time
+        last_exc = None
+        for attempt in range(1, 4):
+            try:
+                self.ib.connect(self.host, self.port, clientId=self.client_id, timeout=5)
+                print(f"[IBKR] Connected: account={self.account_id}, port={self.port}, clientId={self.client_id}")
+                # Pull in orders from all sessions — without this, openTrades() only
+                # reflects orders placed by this specific API client_id.
+                self.ib.reqAllOpenOrders()
+                self.ib.sleep(1)
+                print(f"[IBKR] All open orders synced ({len(self.ib.openTrades())} open trades visible)")
+                return
+            except Exception as e:
+                last_exc = e
+                if attempt < 3:
+                    print(f"[IBKR] Connection attempt {attempt} failed (clientId={self.client_id}): {e} — retrying in 3s")
+                    time.sleep(3)
+        raise IBKRConnectionError(
+            f"Failed to connect to IBKR at {self.host}:{self.port} "
+            f"(clientId={self.client_id}) after 3 attempts: {last_exc}"
+        )
 
     def disconnect(self) -> None:
         """Gracefully disconnect from IBKR."""
