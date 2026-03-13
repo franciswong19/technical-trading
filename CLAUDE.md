@@ -267,11 +267,29 @@ Map request types to executors:
 - FAST SELL -> `fast_sell`
 - HOT POTATO -> `hot_potato`
 
-**For SELL EVERYTHING NOW and HOT POTATO** (single request, no per-ticker split):
+**For SELL EVERYTHING NOW** (immediate, no monitoring loop):
 ```
-python3 -m trade_executor.executors.<type> --request trade_executor/state/requests/<request_id>.json
+python3 -m trade_executor.executors.sell_everything --request trade_executor/state/requests/<request_id>.json
 ```
-Then proceed to Step 8 for verification, Step 9 for book-keeping, and Step 10 for final report (same as before).
+Then proceed to Step 8 for verification, Step 9 for book-keeping, and Step 10 for final report.
+
+**For HOT POTATO** (single request, launch in background then monitor with 2-min poll loop):
+```
+python3 -m trade_executor.executors.hot_potato --request trade_executor/state/requests/<request_id>.json
+```
+After launching, enter a poll loop (poll every **2 minutes**) until the process completes:
+
+  A. Check for cycle fill notifications (BUY cycles only — report each cycle once):
+     Fill file: `trade_executor/state/status/<request_id>-<TICKER>-cycle<N>.filled.json`
+     Scan for all N ≥ 1. When a new file appears, report immediately:
+       [TICKER] Cycle N FILLED — [filled_qty] @ $[avg_fill_price]
+                Filled: [filled_at_sgt] (SGT)
+                [Waiting 15 min before stops are placed...]
+
+  B. Check for process completion (TaskOutput block=false):
+     When complete: proceed to Step 8, Step 9, and Step 10.
+
+If the process crashes without a result file, report **CRITICAL ALERT**.
 
 **For NORMAL BUY / NORMAL SELL / FAST BUY / FAST SELL** (parallel per-ticker dispatch):
 Launch ALL ticker executors simultaneously in the background, each with a unique `--client-id-offset` to avoid IBKR client ID collisions:
@@ -291,7 +309,12 @@ Launch ALL in background simultaneously:
   python3 -m trade_executor.executors.<type> --request trade_executor/state/requests/<request_id>-<TICKER>.json --client-id-offset <offset>
   (one background process per ticker, all launched at the same time)
 
-After launching, enter a poll loop (every 30s) until all processes complete:
+After launching, enter a poll loop until all processes complete.
+
+**Poll interval — adaptive based on request type and order type:**
+- **FAST BUY / FAST SELL**: poll every **60 seconds** throughout (executor checks every 1 min)
+- **NORMAL BUY / NORMAL SELL** with `trailing_stop_threshold` tickers: sleep **5 minutes** while any threshold ticker has not yet received its fill file (threshold wait phase is slow by design). As soon as every threshold ticker has either a fill file or a completed process → switch to **2-minute** intervals for the remaining active tickers
+- **NORMAL BUY / NORMAL SELL** with no threshold tickers → poll every **2 minutes** throughout (executor checks every 10 min; polling more often wastes tokens)
 
   A. Check for fill notifications (BUY requests only — report each ticker once):
      Fill file: trade_executor/state/status/<request_id>-<TICKER>.filled.json
@@ -299,6 +322,7 @@ After launching, enter a poll loop (every 30s) until all processes complete:
        [TICKER]: BUY FILLED — [filled_qty] @ $[avg_fill_price]
                  Filled: [filled_at_sgt] (SGT)
                  [Waiting for stop loss placement...]
+     Also: a fill file appearing for a threshold ticker means the threshold phase is done — switch that ticker to 30s tracking.
 
   B. Check for process completion (TaskOutput block=false):
      When a process completes:
@@ -316,12 +340,12 @@ After launching, enter a poll loop (every 30s) until all processes complete:
        4. Book-keep:
           python3 -m trade_executor.trade_recorder --result trade_executor/state/results/<request_id>.json
 
-  C. If all processes completed: exit poll loop. Else: sleep 30s, repeat.
+  C. If all processes completed: exit poll loop. Else: sleep per the adaptive interval above, repeat.
 ```
 If any ticker executor crashes without a result file, report **CRITICAL ALERT** for that ticker and continue to the next.
 
 ### Steps 8-9: (Merged into Step 7 per-ticker loop above)
-For SELL EVERYTHING NOW and HOT POTATO, Steps 8-9 remain as standalone steps:
+For SELL EVERYTHING NOW and HOT POTATO, Steps 8-9 run as standalone steps after the monitoring loop exits:
 
 **Step 8 — Verify Results:**
 Read `trade_executor/state/results/<request_id>.json` and verify status, filled_qty, stop_loss_placed, and errors.
