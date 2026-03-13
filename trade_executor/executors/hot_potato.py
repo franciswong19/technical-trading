@@ -54,7 +54,7 @@ def _write_fill_notification(request_id: str, ticker_result, seq_num: int, statu
     print(f"[HotPotato] Fill notification written: {path}")
 
 
-def execute(request: TradeRequest) -> ExecutionResult:
+def execute(request: TradeRequest, client_id_offset: int = 0) -> ExecutionResult:
     """Execute HOT POTATO."""
     exchange_cfg = EXCHANGES[request.exchange]
     tz = pytz.timezone(exchange_cfg['timezone'])
@@ -76,7 +76,7 @@ def execute(request: TradeRequest) -> ExecutionResult:
     for i, account in enumerate(request.accounts):
         account_id = account['account_id']
         port = account['port']
-        client_id = BASE_CLIENT_ID + i
+        client_id = BASE_CLIENT_ID + client_id_offset + i
 
         account_result = AccountResult(account_id=account_id)
         client = IBKRClient(account_id, port, client_id)
@@ -299,12 +299,9 @@ def execute(request: TradeRequest) -> ExecutionResult:
                     ticker_result.filled_qty = filled_qty
                     ticker_result.avg_fill_price = fill_price
                     stamp_ticker_fill(ticker_result, tz)
-                    print(f"[HotPotato] ORDER FILLED cycle {seq_num}: {ticker} {request.transaction_type} "
-                          f"{filled_qty} @ {fill_price:.4f}")
                     _write_fill_notification(request.request_id, ticker_result, seq_num, STATUS_DIR)
-
-                    # 15-min timer before placing stops
-                    print(f"[HotPotato] Waiting {STOP_LOSS_DELAY}s before placing stops...")
+                    print(f"[HotPotato] Cycle {seq_num} filled: {ticker} {request.transaction_type} "
+                          f"{filled_qty} @ {fill_price:.4f}. Waiting {STOP_LOSS_DELAY}s before stops...")
                     time.sleep(STOP_LOSS_DELAY)
 
                     # Check deadline again after 15-min wait
@@ -344,7 +341,6 @@ def execute(request: TradeRequest) -> ExecutionResult:
 
                     if trigger_result['triggered_name']:
                         # One stop triggered - cancel the other
-                        print(f"[HotPotato] {trigger_result['triggered_name']} stop triggered at cycle {seq_num}")
                         for remaining in trigger_result['remaining']:
                             try:
                                 client.cancel_order(remaining['trade'])
@@ -352,7 +348,7 @@ def execute(request: TradeRequest) -> ExecutionResult:
                                 pass
 
                         cycle_count += 1
-                        print(f"[HotPotato] Cycle count: {cycle_count}/{cycle_threshold}")
+                        print(f"[HotPotato] Cycle {seq_num} {trigger_result['triggered_name']} stop triggered. Count: {cycle_count}/{cycle_threshold}")
                     else:
                         # Deadline reached while monitoring stops
                         for st in stop_trades:
@@ -457,6 +453,7 @@ def execute(request: TradeRequest) -> ExecutionResult:
 def main():
     parser = argparse.ArgumentParser(description='HOT POTATO executor')
     parser.add_argument('--request', required=True, help='Path to request JSON file')
+    parser.add_argument('--client-id-offset', type=int, default=0, help='Offset for IBKR client ID (for parallel execution)')
     args = parser.parse_args()
 
     request = TradeRequest.from_json(args.request)
@@ -470,14 +467,14 @@ def main():
     os.makedirs(STATUS_DIR, exist_ok=True)
 
     clientids = {
-        account['account_id']: BASE_CLIENT_ID + i
+        account['account_id']: BASE_CLIENT_ID + args.client_id_offset + i
         for i, account in enumerate(request.accounts)
     }
     clientids_path = os.path.join(STATUS_DIR, f"{request.request_id}.clientids.json")
     with open(clientids_path, 'w') as f:
         json.dump(clientids, f)
 
-    result = execute(request)
+    result = execute(request, client_id_offset=args.client_id_offset)
     result.to_json(result_path)
     print(f"\n[HotPotato] Result written to {result_path}")
     print(f"[HotPotato] Status: {result.status}")

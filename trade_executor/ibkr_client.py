@@ -10,6 +10,7 @@ from datetime import datetime
 
 import pytz
 from ib_insync import IB, Stock, MarketOrder, StopOrder, Order
+from ib_insync.util import UNSET_DOUBLE
 
 from trade_executor.config import IBKR_HOST, EXCHANGES
 
@@ -422,11 +423,13 @@ class IBKRClient:
             remaining_qty = trade.order.totalQuantity - (trade.orderStatus.filled or 0)
             if remaining_qty <= 0:
                 continue
-            # Determine price: prefer lmtPrice, fall back to auxPrice (stop/trail price)
+            # Determine price: prefer lmtPrice, fall back to auxPrice (stop/trail price).
+            # Exclude ib_insync's UNSET_DOUBLE sentinel (~1.8e308) which compares > 0
+            # but is not a real price.
             price = None
-            if trade.order.lmtPrice and trade.order.lmtPrice > 0:
+            if trade.order.lmtPrice and 0 < trade.order.lmtPrice < UNSET_DOUBLE:
                 price = trade.order.lmtPrice
-            elif trade.order.auxPrice and trade.order.auxPrice > 0:
+            elif trade.order.auxPrice and 0 < trade.order.auxPrice < UNSET_DOUBLE:
                 price = trade.order.auxPrice
             if price:
                 reserved = remaining_qty * price
