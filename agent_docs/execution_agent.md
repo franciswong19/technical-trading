@@ -11,6 +11,7 @@ python -m trade_executor.executors.<type> --request <path_to_request.json>
 
 Where `<type>` is one of:
 - `sell_everything` - SELL EVERYTHING NOW
+- `selective_sell_now` - SELECTIVE SELL NOW
 - `normal_buy` - NORMAL BUY
 - `normal_sell` - NORMAL SELL
 - `fast_buy` - FAST BUY
@@ -85,6 +86,7 @@ Written by the executor to `trade_executor/state/results/<request_id>.json`:
 | Request Type | Check Interval | Deadline Behavior |
 |---|---|---|
 | SELL EVERYTHING NOW | N/A (wait 60s) | Immediate |
+| SELECTIVE SELL NOW | N/A (wait 60s) | Immediate |
 | NORMAL BUY/SELL | 10 min | Exchange cutoff (15 min before close) |
 | FAST BUY/SELL | 1 min | Timed (start + XX min) |
 | HOT POTATO | 1 min fill / 5 min stops | Timed + exchange cutoff |

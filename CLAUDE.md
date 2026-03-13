@@ -10,11 +10,12 @@ Account IDs (e.g. `U1234567`) and ports are provided directly by the user in the
 
 ## Request Types
 1. **SELL EVERYTHING NOW** - Emergency liquidation of all positions
-2. **NORMAL BUY** - Standard buy with 10-min monitoring, before close
-3. **NORMAL SELL** - Standard sell with 10-min monitoring, before close
-4. **FAST BUY** - Time-limited buy with 1-min monitoring, midprice
-5. **FAST SELL** - Time-limited sell with 1-min monitoring, midprice
-6. **HOT POTATO** - Cycle-based buy/sell with dual stops, single ticker
+2. **SELECTIVE SELL NOW** - Market sell of specified tickers immediately
+3. **NORMAL BUY** - Standard buy with 10-min monitoring, before close
+4. **NORMAL SELL** - Standard sell with 10-min monitoring, before close
+5. **FAST BUY** - Time-limited buy with 1-min monitoring, midprice
+6. **FAST SELL** - Time-limited sell with 1-min monitoring, midprice
+7. **HOT POTATO** - Cycle-based buy/sell with dual stops, single ticker
 
 ## Available Skills
 - `/abort-specific-requests` - Abort one or more in-flight requests by ID
@@ -42,17 +43,17 @@ When the user provides a filled template or free-text request, extract:
 ### Step 2: Validate
 Apply these rules:
 
-| Field | SELL EVERYTHING NOW | NORMAL BUY | NORMAL SELL | FAST BUY | FAST SELL | HOT POTATO |
-|-------|---------------------|------------|-------------|----------|-----------|------------|
-| Tickers | N/A (all positions) | Multiple | Multiple | Multiple | Multiple | Single only |
-| Transaction | SELL | BUY | SELL | BUY | SELL | BUY or SELL |
-| Transaction before close | N/A | N/A | N/A | N/A | N/A | BUY or SELL (required — may differ from Transaction) |
-| Fulfillment | 100% (fixed) | 1%-100% | 1%-100% | 1%-100% | 1%-100% | 1%-100% |
-| Initial order | Market (fixed) | Midprice, Trailing Stop, Trailing Stop Threshold, or Fixed Stop | Midprice, Trailing Stop, Trailing Stop Threshold, or Fixed Stop | Midprice (fixed) | Midprice (fixed) | Midprice, Trailing Stop, Trailing Stop Threshold, or Fixed Stop |
-| Subsequent order | N/A | N/A | N/A | N/A | N/A | Trailing Stop (required) |
-| Stop type | N/A | NORMAL or HEIGHTENED or FIXED PRICE | N/A | NORMAL or HEIGHTENED or FIXED PRICE | N/A | Stop type 1: fixed stop at X.X% \| Stop type 2: ADHOC trailing % |
-| Duration | IMMED | BEFORE CLOSE | BEFORE CLOSE | XX MINS (>=3) | XX MINS (>=3) | BEFORE CLOSE |
-| Cycle threshold | N/A | N/A | N/A | N/A | N/A | Default 3 |
+| Field | SELL EVERYTHING NOW | SELECTIVE SELL NOW | NORMAL BUY | NORMAL SELL | FAST BUY | FAST SELL | HOT POTATO |
+|-------|---------------------|--------------------|------------|-------------|----------|-----------|------------|
+| Tickers | N/A (all positions) | Multiple specified | Multiple | Multiple | Multiple | Multiple | Single only |
+| Transaction | SELL | SELL | BUY | SELL | BUY | SELL | BUY or SELL |
+| Transaction before close | N/A | N/A | N/A | N/A | N/A | N/A | BUY or SELL (required — may differ from Transaction) |
+| Fulfillment | 100% (fixed) | 100% (fixed) | 1%-100% | 1%-100% | 1%-100% | 1%-100% | 1%-100% |
+| Initial order | Market (fixed) | Market (fixed) | Midprice, Trailing Stop, Trailing Stop Threshold, or Fixed Stop | Midprice, Trailing Stop, Trailing Stop Threshold, or Fixed Stop | Midprice (fixed) | Midprice (fixed) | Midprice, Trailing Stop, Trailing Stop Threshold, or Fixed Stop |
+| Subsequent order | N/A | N/A | N/A | N/A | N/A | N/A | Trailing Stop (required) |
+| Stop type | N/A | N/A | NORMAL or HEIGHTENED or FIXED PRICE | N/A | NORMAL or HEIGHTENED or FIXED PRICE | N/A | Stop type 1: fixed stop at X.X% \| Stop type 2: ADHOC trailing % |
+| Duration | IMMED | IMMED | BEFORE CLOSE | BEFORE CLOSE | XX MINS (>=3) | XX MINS (>=3) | BEFORE CLOSE |
+| Cycle threshold | N/A | N/A | N/A | N/A | N/A | N/A | Default 3 |
 
 If validation fails, tell the user what's wrong and ask for correction.
 
@@ -71,7 +72,7 @@ Run: `python3 -c "from trade_executor.request_id import generate_request_id; pri
    ```
 
 2. Build request JSON files (TradeRequest):
-   - **SELL EVERYTHING NOW / HOT POTATO**: Single request file with all ticker_params.
+   - **SELL EVERYTHING NOW / SELECTIVE SELL NOW / HOT POTATO**: Single request file with all ticker_params.
      Save to: `trade_executor/state/requests/<request_id>.json`
    - **NORMAL BUY / NORMAL SELL / FAST BUY / FAST SELL**: One request file **per ticker**, each with `ticker_params` containing exactly one entry.
      Save to: `trade_executor/state/requests/<request_id>-<TICKER>.json`
@@ -161,6 +162,28 @@ Run: `python3 -c "from trade_executor.request_id import generate_request_id; pri
    "
    ```
 
+   Example (SELECTIVE SELL NOW — sell AAPL and MSFT immediately):
+   ```python
+   python3 -c "
+   from trade_executor.models.request import TradeRequest, TickerParams
+   req = TradeRequest(
+       request_id='20260227-004',
+       accounts=[{'alias': 'U1234567', 'account_id': 'U1234567', 'port': 4001}],
+       exchange='US',
+       request_type='SELECTIVE_SELL_NOW',
+       transaction_type='SELL',
+       duration_type='IMMEDIATE',
+       duration_minutes=None,
+       ticker_params=[
+           TickerParams(ticker='AAPL', fulfillment_pct=1.0, initial_order_type='market'),
+           TickerParams(ticker='MSFT', fulfillment_pct=1.0, initial_order_type='market'),
+       ],
+   )
+   req.to_json('trade_executor/state/requests/20260227-004.json')
+   print('Written.')
+   "
+   ```
+
    Example (NORMAL BUY with trailing stop threshold — only place order if price drops below 20.50):
    ```python
    python3 -c "
@@ -190,7 +213,7 @@ Run: `python3 -c "from trade_executor.request_id import generate_request_id; pri
    ```
 
 ### Step 5: Pre-Confirmation Preview
-**Skip this step for SELL EVERYTHING NOW** (speed is paramount).
+**Skip this step for SELL EVERYTHING NOW and SELECTIVE SELL NOW** (speed is paramount).
 
 Run the preview calculator to fetch live prices and estimate quantities. For BUY requests it performs an **aggregate cash check** across all tickers before per-ticker calculations.
 
@@ -222,6 +245,21 @@ Exchange: [exchange]
 Type: SELL EVERYTHING NOW
 Transaction: SELL
 Duration: IMMEDIATE
+====================
+Proceed? (yes/no)
+```
+
+**For SELECTIVE SELL NOW** (no preview):
+```
+REQUEST CONFIRMATION
+====================
+Request ID: [YYYYMMDD-XXX]
+Account(s): [list]
+Exchange: [exchange]
+Type: SELECTIVE SELL NOW
+Transaction: SELL
+Duration: IMMEDIATE
+Tickers: [TICKER1, TICKER2, ...]
 ====================
 Proceed? (yes/no)
 ```
@@ -262,6 +300,7 @@ If the preview calculator returns errors for any ticker, display the error inste
 
 Map request types to executors:
 - SELL EVERYTHING NOW -> `sell_everything`
+- SELECTIVE SELL NOW -> `selective_sell_now`
 - NORMAL BUY -> `normal_buy`
 - NORMAL SELL -> `normal_sell`
 - FAST BUY -> `fast_buy`
@@ -273,6 +312,13 @@ Map request types to executors:
 python3 -m trade_executor.executors.sell_everything --request trade_executor/state/requests/<request_id>.json
 ```
 Then proceed to Step 8 for verification, Step 9 for book-keeping, and Step 10 for final report.
+
+**For SELECTIVE SELL NOW** (immediate, no monitoring loop):
+```
+python3 -m trade_executor.executors.selective_sell_now --request trade_executor/state/requests/<request_id>.json
+```
+Then proceed to Step 8 for verification, Step 9 for book-keeping, and Step 10 for final report.
+Note: `"<TICKER>: not in portfolio — skipped"` entries in `result.errors` are non-fatal warnings — surface them to the user but do not treat as failures when determining overall status.
 
 **For HOT POTATO** (single request, launch in background then monitor with 2-min poll loop):
 ```
@@ -352,10 +398,11 @@ After launching, enter a poll loop until all processes complete.
 If any ticker executor crashes without a result file, report **CRITICAL ALERT** for that ticker and continue to the next.
 
 ### Steps 8-9: (Merged into Step 7 per-ticker loop above)
-For SELL EVERYTHING NOW and HOT POTATO, Steps 8-9 run as standalone steps after the monitoring loop exits:
+For SELL EVERYTHING NOW, SELECTIVE SELL NOW, and HOT POTATO, Steps 8-9 run as standalone steps after the monitoring loop exits:
 
 **Step 8 — Verify Results:**
 Read `trade_executor/state/results/<request_id>.json` and verify status, filled_qty, stop_loss_placed, and errors.
+For SELECTIVE SELL NOW: `"<TICKER>: not in portfolio — skipped"` entries in `errors` are non-fatal warnings — surface them to the user but do not treat as failures.
 
 **Step 9 — Book-keeping:**
 ```
@@ -431,7 +478,7 @@ For all: `python -m trade_executor.abort --all`
 ### Step C: Report
 Show which tasks were stopped, which orders were cancelled per account per ticker, and any errors.
 
-Note: Entry orders (unfilled buys/sells) are cancelled. All stop-loss orders are **preserved** — including ones from previous days. SELL_EVERYTHING_NOW requests are skipped (cannot be aborted) — tell the user to manage those manually in IB Gateway. After aborting, the script queries all remaining open orders on IBKR and prints an "Active orders still on IBKR" section. Surface this to the user with full details (ticker, action, order type, price, order ID). If the script annotated an order with `[today: <request_id>]`, include that request ID in the report so the user knows which of today's requests it belongs to. Make clear all remaining orders are valid and continue protecting positions.
+Note: Entry orders (unfilled buys/sells) are cancelled. All stop-loss orders are **preserved** — including ones from previous days. SELL_EVERYTHING_NOW and SELECTIVE_SELL_NOW requests are skipped (cannot be aborted — immediate market orders) — tell the user to manage those manually in IB Gateway. After aborting, the script queries all remaining open orders on IBKR and prints an "Active orders still on IBKR" section. Surface this to the user with full details (ticker, action, order type, price, order ID). If the script annotated an order with `[today: <request_id>]`, include that request ID in the report so the user knows which of today's requests it belongs to. Make clear all remaining orders are valid and continue protecting positions.
 
 ## Reference Documents
 - Execution lifecycle details: `agent_docs/execution_agent.md`

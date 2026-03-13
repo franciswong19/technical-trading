@@ -156,9 +156,9 @@ def abort_requests(request_files: list) -> None:
             print(f"[ABORT] ERROR loading {f}: {e}")
             continue
 
-        if req.request_type == 'SELL_EVERYTHING_NOW':
+        if req.request_type in ('SELL_EVERYTHING_NOW', 'SELECTIVE_SELL_NOW'):
             print(
-                f"[ABORT] SKIPPED {os.path.basename(f)}: SELL_EVERYTHING_NOW cannot be "
+                f"[ABORT] SKIPPED {os.path.basename(f)}: {req.request_type} cannot be "
                 f"aborted via this script — manage manually in IB Gateway."
             )
             continue
