@@ -223,6 +223,62 @@ def execute(request: TradeRequest, client_id_offset: int = 0) -> ExecutionResult
                             )
                             mon_result = fill_monitor.monitor_until_fill_or_deadline(trade, ticker)
 
+                    elif cycle_count == 0 and tp.initial_order_type == 'fixed_stop':
+                        # ----------------------------------------------------------------
+                        # FIXED STOP (cycle 0 only)
+                        # Poll price every 5 min until condition met or near deadline.
+                        # BUY: price >= threshold → place market order
+                        # SELL: price <= threshold → place market order
+                        # At last check window: condition met → market order, else break
+                        # ----------------------------------------------------------------
+                        threshold_price = tp.initial_threshold_price
+                        is_buy = request.transaction_type == 'BUY'
+                        condition = (lambda p: p >= threshold_price) if is_buy else (lambda p: p <= threshold_price)
+                        direction_desc = f">= {threshold_price:.2f}" if is_buy else f"<= {threshold_price:.2f}"
+
+                        threshold_monitor = OrderMonitor(
+                            client, THRESHOLD_CHECK_INTERVAL, DURATION_BEFORE_CLOSE,
+                            request.exchange,
+                        )
+
+                        print(f"[HotPotato] Cycle {seq_num}: waiting for price {direction_desc} to trigger fixed stop market order for {ticker}...")
+                        threshold_result = threshold_monitor.wait_for_threshold_or_deadline(
+                            lambda: client.get_current_price(ticker, request.exchange),
+                            condition,
+                        )
+                        current_price = threshold_result['price']
+
+                        if threshold_result['condition_met']:
+                            # Condition met (early or at last check) → market order
+                            print(f"[HotPotato] Cycle {seq_num}: fixed stop triggered at price={current_price:.2f}, placing market order for {ticker}")
+                            if is_buy:
+                                qty = calculate_buy_qty(portfolio_value, available_cash, tp.fulfillment_pct, current_price, ticker)
+                            else:
+                                holdings = client.get_position_qty(ticker)
+                                qty = calculate_sell_qty(holdings, tp.fulfillment_pct, ticker)
+                            ticker_result.target_qty = qty
+                            if qty <= 0:
+                                ticker_result.error = f"Calculated qty is 0 at fixed stop trigger (cycle {seq_num})"
+                                stamp_ticker_completion(ticker_result, tz)
+                                all_ticker_results.append(ticker_result)
+                                break
+                            trade = client.place_market_order(ticker, request.transaction_type, qty, request.exchange)
+                            ticker_result.order_type_used = 'market'
+                            filled = client.wait_for_fill(trade, timeout_seconds=60)
+                            mon_result = {'filled': filled, 'trade': trade, 'deadline_reached': False}
+                            if not filled:
+                                ticker_result.error = "Market order failed at fixed stop trigger"
+                                stamp_ticker_completion(ticker_result, tz)
+                                all_ticker_results.append(ticker_result)
+                                break
+                        else:
+                            # near_deadline + condition not met → abort cycle loop
+                            print(f"[HotPotato] Cycle {seq_num}: fixed stop not triggered at deadline for {ticker} (price={current_price:.2f}), stopping")
+                            ticker_result.error = f"Fixed stop not triggered at deadline (price={current_price:.2f}), no order placed"
+                            stamp_ticker_completion(ticker_result, tz)
+                            all_ticker_results.append(ticker_result)
+                            break
+
                     else:
                         # Standard order placement (midprice / trailing_stop / market)
                         # Also handles all subsequent cycles (cycle_count > 0)
@@ -311,12 +367,17 @@ def execute(request: TradeRequest, client_id_offset: int = 0) -> ExecutionResult
                         all_ticker_results.append(ticker_result)
                         break
 
-                    # Place BOTH stops: fixed at buy price AND trailing stop
+                    # Place BOTH stops: fixed at X.X% offset (Stop type 1) AND trailing stop (Stop type 2)
                     stop_result = stop_mgr.place_trailing_and_fixed_stops(
-                        ticker, filled_qty, fill_price, tp.stop_adhoc_trailing_pct
+                        ticker, filled_qty, fill_price, tp.stop_adhoc_trailing_pct,
+                        stop_type1_pct=tp.stop_type1_pct,
+                        transaction_type=request.transaction_type,
                     )
                     ticker_result.stop_loss_placed = stop_result['success']
-                    ticker_result.stop_loss_price = fill_price  # Fixed stop at buy price
+                    if request.transaction_type == 'BUY':
+                        ticker_result.stop_loss_price = round(fill_price * (1 - tp.stop_type1_pct / 100), 2)
+                    else:
+                        ticker_result.stop_loss_price = round(fill_price * (1 + tp.stop_type1_pct / 100), 2)
 
                     stamp_ticker_completion(ticker_result, tz)
                     all_ticker_results.append(ticker_result)

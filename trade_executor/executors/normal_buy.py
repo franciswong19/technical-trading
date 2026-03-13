@@ -235,6 +235,67 @@ def execute(request: TradeRequest, client_id_offset: int = 0) -> ExecutionResult
 
                     account_result.ticker_results.append(ticker_result)
 
+                elif tp.initial_order_type == 'fixed_stop':
+                    # ----------------------------------------------------------------
+                    # FIXED STOP
+                    # Poll price every 5 min. Place market BUY when price >= threshold.
+                    # At last check window (15 min before close):
+                    #   - condition met  → market order + stop loss
+                    #   - condition not met → no order, exit
+                    # Condition met at any time (including last check) triggers immediately.
+                    # ----------------------------------------------------------------
+                    threshold_price = tp.initial_threshold_price
+                    monitor = OrderMonitor(
+                        client, THRESHOLD_CHECK_INTERVAL, DURATION_BEFORE_CLOSE,
+                        request.exchange,
+                    )
+
+                    print(f"[NormalBuy] Waiting for price >= {threshold_price:.2f} to trigger fixed stop market order for {ticker}...")
+                    threshold_result = monitor.wait_for_threshold_or_deadline(
+                        lambda: client.get_current_price(ticker, request.exchange),
+                        lambda p: p >= threshold_price,
+                    )
+                    current_price = threshold_result['price']
+
+                    if threshold_result['condition_met']:
+                        # Condition met (early or at last check) → market order
+                        print(f"[NormalBuy] Fixed stop triggered: price={current_price:.2f} >= threshold={threshold_price:.2f}, placing market order for {ticker}")
+                        qty = calculate_buy_qty(
+                            portfolio_value, available_cash, tp.fulfillment_pct, current_price, ticker
+                        )
+                        ticker_result.target_qty = qty
+                        if qty > 0:
+                            market_trade = client.place_market_order(ticker, 'BUY', qty, request.exchange)
+                            ticker_result.order_type_used = 'market'
+                            filled = client.wait_for_fill(market_trade, timeout_seconds=60)
+                            if filled:
+                                fill_price = client.get_fill_price(market_trade)
+                                filled_qty = client.get_filled_qty(market_trade)
+                                ticker_result.filled_qty = filled_qty
+                                ticker_result.avg_fill_price = fill_price
+                                stamp_ticker_fill(ticker_result, tz)
+                                print(f"[NormalBuy] ORDER FILLED (fixed stop): {ticker} - {filled_qty} @ {fill_price:.4f}")
+                                _write_fill_notification(request.request_id, ticker_result, STATUS_DIR)
+                                print(f"[NormalBuy] Waiting {STOP_LOSS_DELAY}s before placing stop loss for {ticker}...")
+                                client.ib.sleep(STOP_LOSS_DELAY)
+                                stop_result = stop_mgr.place_stop_loss_now(
+                                    ticker, filled_qty, fill_price,
+                                    tp.stop_type, tp.stop_fixed_price,
+                                )
+                                ticker_result.stop_loss_placed = stop_result['success']
+                                ticker_result.stop_loss_price = stop_result['stop_price']
+                            else:
+                                ticker_result.error = "Market order did not fill within 60s"
+                                result.errors.append(f"{account_id}/{ticker}: Market order timeout")
+                        else:
+                            ticker_result.error = f"Calculated qty is 0 at fixed stop trigger (pv={portfolio_value:.2f}, pct={tp.fulfillment_pct}, price={current_price:.2f})"
+                    else:
+                        # near_deadline + condition not met → no order
+                        print(f"[NormalBuy] Fixed stop not triggered at deadline for {ticker} (price={current_price:.2f} < threshold={threshold_price:.2f}), no order placed")
+                        ticker_result.error = f"Fixed stop not triggered at deadline (price={current_price:.2f} < threshold={threshold_price:.2f})"
+
+                    account_result.ticker_results.append(ticker_result)
+
                 else:
                     # ----------------------------------------------------------------
                     # STANDARD ORDER TYPES: midprice / trailing_stop / market
