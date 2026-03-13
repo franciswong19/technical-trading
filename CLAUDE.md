@@ -411,6 +411,10 @@ python3 -m trade_executor.trade_recorder --result trade_executor/state/results/<
 
 ### Step 10: Final Report
 After all tickers complete (or after single-request execution), report:
+
+**IMPORTANT: Always use `avg_fill_price` (NOT `stop_loss_price`) for the `@` price in result lines. These are adjacent fields in the JSON — do not confuse them.**
+
+**For non-HOT-POTATO requests:**
 ```
 EXECUTION COMPLETE
 ==================
@@ -419,10 +423,29 @@ Overall Status: [COMPLETED/PARTIAL/FAILED]
 
 Results:
   Account: [account_id]
-    [TICKER]: [action] [filled_qty] @ $[avg_fill_price]
+    [TICKER]: [action] [filled_qty] @ $[avg_fill_price]   ← avg_fill_price, NOT stop_loss_price
               Order: [order_type_used], Escalated: [yes/no]
               Stop Loss: $[stop_loss_price] ([stop_type])
               Filled: [filled_at_local] (local) / [filled_at_sgt] (SGT)
+              Book-keeping: [Recorded / FAILED]
+  ...
+==================
+```
+
+**For HOT POTATO requests** (show each cycle separately; skip cycles with filled_qty == 0):
+```
+EXECUTION COMPLETE
+==================
+Request ID: [YYYYMMDD-XXX]
+Overall Status: [COMPLETED/PARTIAL/FAILED]
+
+Results:
+  Account: [account_id]
+    [TICKER] Cycle N: [action] [filled_qty] @ $[avg_fill_price]   ← avg_fill_price, NOT stop_loss_price
+              Order: [order_type_used], Escalated: [yes/no]
+              Stop type 1 (fixed): $[stop_loss_price]
+              Filled: [filled_at_local] (local) / [filled_at_sgt] (SGT)
+    (repeat for each cycle with filled_qty > 0)
               Book-keeping: [Recorded / FAILED]
   ...
 ==================
