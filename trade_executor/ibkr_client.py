@@ -292,7 +292,7 @@ class IBKRClient:
         return self._place_and_verify(contract, order, ticker)
 
     def place_stop_loss(self, ticker: str, qty: int, stop_price: float,
-                        exchange: str) -> 'Trade':
+                        exchange: str, action: str = 'SELL') -> 'Trade':
         """Place a protective stop loss order.
 
         Args:
@@ -300,12 +300,13 @@ class IBKRClient:
             qty: Number of shares
             stop_price: Stop trigger price
             exchange: Exchange key
+            action: Order action ('SELL' for long protection, 'BUY' for short protection)
 
         Returns:
             Trade object
         """
         contract = self._create_contract(ticker, exchange)
-        order = StopOrder('SELL', qty, round(stop_price, 2))
+        order = StopOrder(action, qty, round(stop_price, 2))
         return self._place_and_verify(contract, order, ticker)
 
     # ==========================================

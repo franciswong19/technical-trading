@@ -15,14 +15,15 @@ class TickerParams:
     """Parameters for a single ticker within a trade request."""
     ticker: str
     fulfillment_pct: float                         # 0.01 to 1.0 (1% to 100%)
-    initial_order_type: str                        # 'market' / 'midprice' / 'trailing_stop'
+    initial_order_type: str                        # 'market' / 'midprice' / 'trailing_stop' / 'trailing_stop_threshold' / 'fixed_stop'
     initial_trailing_pct: Optional[float] = None   # If initial order is trailing stop (e.g. 1.5)
-    initial_threshold_price: Optional[float] = None  # If initial_order_type='trailing_stop_threshold'
+    initial_threshold_price: Optional[float] = None  # If initial_order_type='trailing_stop_threshold' or 'fixed_stop'
     subsequent_order_type: Optional[str] = None    # HOT POTATO only: 'trailing_stop'
     subsequent_trailing_pct: Optional[float] = None  # HOT POTATO only: trailing stop %
     stop_type: Optional[str] = None                # 'NORMAL' / 'HEIGHTENED' / 'FIXED_PRICE' / 'ADHOC'
     stop_fixed_price: Optional[float] = None       # If stop_type == 'FIXED_PRICE'
-    stop_adhoc_trailing_pct: Optional[float] = None  # If stop_type == 'ADHOC' (HOT POTATO)
+    stop_adhoc_trailing_pct: Optional[float] = None  # HOT POTATO Stop type 2: ADHOC trailing stop %
+    stop_type1_pct: Optional[float] = None         # HOT POTATO Stop type 1: fixed stop % offset from fill price
     cycle_threshold: Optional[int] = None          # HOT POTATO only, default 3
 
 

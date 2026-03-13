@@ -48,9 +48,9 @@ Apply these rules:
 | Transaction | SELL | BUY | SELL | BUY | SELL | BUY or SELL |
 | Transaction before close | N/A | N/A | N/A | N/A | N/A | BUY or SELL (required — may differ from Transaction) |
 | Fulfillment | 100% (fixed) | 1%-100% | 1%-100% | 1%-100% | 1%-100% | 1%-100% |
-| Initial order | Market (fixed) | Midprice, Trailing Stop, or Trailing Stop Threshold | Midprice, Trailing Stop, or Trailing Stop Threshold | Midprice (fixed) | Midprice (fixed) | Midprice, Trailing Stop, or Trailing Stop Threshold |
+| Initial order | Market (fixed) | Midprice, Trailing Stop, Trailing Stop Threshold, or Fixed Stop | Midprice, Trailing Stop, Trailing Stop Threshold, or Fixed Stop | Midprice (fixed) | Midprice (fixed) | Midprice, Trailing Stop, Trailing Stop Threshold, or Fixed Stop |
 | Subsequent order | N/A | N/A | N/A | N/A | N/A | Trailing Stop (required) |
-| Stop type | N/A | NORMAL or HEIGHTENED or FIXED PRICE | N/A | NORMAL or HEIGHTENED or FIXED PRICE | N/A | ADHOC trailing % |
+| Stop type | N/A | NORMAL or HEIGHTENED or FIXED PRICE | N/A | NORMAL or HEIGHTENED or FIXED PRICE | N/A | Stop type 1: fixed stop at X.X% \| Stop type 2: ADHOC trailing % |
 | Duration | IMMED | BEFORE CLOSE | BEFORE CLOSE | XX MINS (>=3) | XX MINS (>=3) | BEFORE CLOSE |
 | Cycle threshold | N/A | N/A | N/A | N/A | N/A | Default 3 |
 
@@ -81,14 +81,15 @@ Run: `python3 -c "from trade_executor.request_id import generate_request_id; pri
    |-------|------|-------|
    | `ticker` | str | e.g. `'TQQQ'` |
    | `fulfillment_pct` | float | 0.01–1.0 (e.g. `0.10` for 10%) |
-   | `initial_order_type` | str | `'market'` / `'midprice'` / `'trailing_stop'` / `'trailing_stop_threshold'` |
+   | `initial_order_type` | str | `'market'` / `'midprice'` / `'trailing_stop'` / `'trailing_stop_threshold'` / `'fixed_stop'` |
    | `initial_trailing_pct` | float or None | Required if `initial_order_type='trailing_stop'` or `'trailing_stop_threshold'` |
-   | `initial_threshold_price` | float or None | Required if `initial_order_type='trailing_stop_threshold'` |
+   | `initial_threshold_price` | float or None | Required if `initial_order_type='trailing_stop_threshold'` or `'fixed_stop'` |
    | `subsequent_order_type` | str or None | HOT POTATO only: `'trailing_stop'` |
    | `subsequent_trailing_pct` | float or None | HOT POTATO only |
    | `stop_type` | str or None | `'NORMAL'` / `'HEIGHTENED'` / `'FIXED_PRICE'` / `'ADHOC'` |
    | `stop_fixed_price` | float or None | Required if `stop_type='FIXED_PRICE'` |
-   | `stop_adhoc_trailing_pct` | float or None | HOT POTATO only, required if `stop_type='ADHOC'` |
+   | `stop_adhoc_trailing_pct` | float or None | HOT POTATO Stop type 2: ADHOC trailing stop %, required if `stop_type='ADHOC'` |
+   | `stop_type1_pct` | float or None | HOT POTATO Stop type 1: fixed stop % offset from fill price |
    | `cycle_threshold` | int or None | HOT POTATO only, default 3 |
 
    **TradeRequest field reference** (top-level fields):
@@ -243,7 +244,7 @@ Ticker Details:
   [TICKER]: [fulfillment%], [order type], stop=[stop type]
             Est. price: ~$XX.XX | Qty: XX | Est. value: ~$X,XXX.XX
             Est. stop loss: ~$XX.XX (if BUY)
-            Threshold: $XX.XX (trigger condition: price [</>] threshold) (if trailing_stop_threshold)
+            Threshold: $XX.XX (trigger condition: price [</>] threshold) (if trailing_stop_threshold or fixed_stop)
   ...
 
 NOTE: Prices are estimates and will be recalculated at execution time.
@@ -319,8 +320,8 @@ After launching, enter a poll loop until all processes complete.
 
 **Poll interval — adaptive based on request type and order type:**
 - **FAST BUY / FAST SELL**: poll every **60 seconds** throughout (executor checks every 1 min)
-- **NORMAL BUY / NORMAL SELL** with `trailing_stop_threshold` tickers: sleep **5 minutes** while any threshold ticker has not yet received its fill file (threshold wait phase is slow by design). As soon as every threshold ticker has either a fill file or a completed process → switch to **2-minute** intervals for the remaining active tickers
-- **NORMAL BUY / NORMAL SELL** with no threshold tickers → poll every **2 minutes** throughout (executor checks every 10 min; polling more often wastes tokens)
+- **NORMAL BUY / NORMAL SELL** with `trailing_stop_threshold` or `fixed_stop` tickers: sleep **5 minutes** while any such ticker has not yet received its fill file (threshold/fixed-stop wait phase is slow by design). As soon as every such ticker has either a fill file or a completed process → switch to **2-minute** intervals for the remaining active tickers
+- **NORMAL BUY / NORMAL SELL** with no threshold/fixed-stop tickers → poll every **2 minutes** throughout (executor checks every 10 min; polling more often wastes tokens)
 
   A. Check for fill notifications (BUY requests only — report each ticker once):
      Fill file: trade_executor/state/status/<request_id>-<TICKER>.filled.json
@@ -387,12 +388,19 @@ Results:
   - BUY: if `current_price < threshold_price` → place trailing stop; at the deadline itself (3:45 PM / exchange cutoff for NORMAL; at the timed deadline for HOT POTATO), if a trailing stop is active but unfilled → escalate to market; if no order yet and condition is met → place market order; if condition not met at deadline → no order.
   - SELL: same logic but condition is `current_price > threshold_price`.
   - **Not supported** for FAST BUY, FAST SELL, or SELL EVERYTHING NOW — stop and tell the user if requested.
+- **fixed stop at XX.XX**: Poll price every 5 minutes. Place a market order immediately when the trigger price is reached — no trailing stop, no monitoring loop after trigger.
+  - BUY: trigger when `current_price >= threshold_price` → place market BUY, wait fill, place stop loss.
+  - SELL: trigger when `current_price <= threshold_price` → cancel existing orders, place market SELL, wait fill.
+  - HOT POTATO: only applies on cycle 0; subsequent cycles use `subsequent_order_type` as usual.
+  - At 15 min before close (near deadline): condition met → market order; condition not met → no order, done.
+  - **Not supported** for FAST BUY, FAST SELL, or SELL EVERYTHING NOW — stop and tell the user if requested.
 
 ## Stop Type Reference
 - **NORMAL**: Stop loss at 8% below buy price
 - **HEIGHTENED**: Stop loss at 3% below buy price
 - **FIXED PRICE AT XX.XX**: Stop loss at user-specified exact price
-- **ADHOC trailing stop at X.X%**: HOT POTATO only, trailing stop percentage
+- **Stop type 1: fixed stop at X.X%**: HOT POTATO only — fixed stop placed at X.X% offset from fill price (SELL stop for BUY cycles, BUY stop for SELL cycles)
+- **Stop type 2: ADHOC trailing stop at X.X%**: HOT POTATO only — trailing stop percentage for the session-wide hard stop
 
 ## Safety Rules
 1. **NEVER** place a live trade without explicit user confirmation ("yes")

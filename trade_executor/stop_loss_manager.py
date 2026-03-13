@@ -114,16 +114,20 @@ class StopLossManager:
             }
 
     def place_trailing_and_fixed_stops(self, ticker: str, qty: int,
-                                       buy_price: float,
-                                       trailing_pct: float) -> dict:
-        """Place BOTH a fixed stop at buy price AND a trailing stop.
+                                       fill_price: float,
+                                       trailing_pct: float,
+                                       stop_type1_pct: float,
+                                       transaction_type: str) -> dict:
+        """Place BOTH a fixed stop AND a trailing stop.
         Used for HOT POTATO request type.
 
         Args:
             ticker: Stock symbol
             qty: Number of shares
-            buy_price: Average fill price (used as fixed stop price)
-            trailing_pct: Trailing stop percentage
+            fill_price: Average fill price
+            trailing_pct: Trailing stop percentage (Stop type 2)
+            stop_type1_pct: Fixed stop percentage offset from fill price (Stop type 1)
+            transaction_type: 'BUY' or 'SELL' — direction of the fill
 
         Returns:
             dict: {fixed_stop_trade, trailing_stop_trade, success}
@@ -134,21 +138,29 @@ class StopLossManager:
             'success': True,
         }
 
-        # Fixed stop at buy price (breakeven protection)
+        # Fixed stop at X.X% offset from fill price (Stop type 1)
+        if transaction_type == 'BUY':
+            fixed_stop_price = round(fill_price * (1 - stop_type1_pct / 100), 2)
+            stop_action = 'SELL'
+        else:
+            fixed_stop_price = round(fill_price * (1 + stop_type1_pct / 100), 2)
+            stop_action = 'BUY'
+
         try:
             fixed_trade = self.client.place_stop_loss(
-                ticker, qty, buy_price, self.exchange
+                ticker, qty, fixed_stop_price, self.exchange, action=stop_action
             )
             result['fixed_stop_trade'] = fixed_trade
-            print(f"[StopLoss] HOT POTATO fixed stop for {ticker} at ${buy_price:.2f}")
+            print(f"[StopLoss] HOT POTATO fixed stop for {ticker} at ${fixed_stop_price:.2f} ({stop_action})")
         except Exception as e:
             print(f"[StopLoss] FAILED fixed stop for {ticker}: {e}")
             result['success'] = False
 
-        # Trailing stop
+        # Trailing stop (Stop type 2)
+        trailing_action = 'SELL' if transaction_type == 'BUY' else 'BUY'
         try:
             trailing_trade = self.client.place_trailing_stop_order(
-                ticker, 'SELL', qty, trailing_pct, self.exchange
+                ticker, trailing_action, qty, trailing_pct, self.exchange
             )
             result['trailing_stop_trade'] = trailing_trade
             print(f"[StopLoss] HOT POTATO trailing stop for {ticker} at {trailing_pct}%")
