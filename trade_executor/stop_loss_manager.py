@@ -160,7 +160,7 @@ class StopLossManager:
         trailing_action = 'SELL' if transaction_type == 'BUY' else 'BUY'
         try:
             trailing_trade = self.client.place_trailing_stop_order(
-                ticker, trailing_action, qty, trailing_pct, self.exchange
+                ticker, trailing_action, qty, trailing_pct, self.exchange, tif='GTC'
             )
             result['trailing_stop_trade'] = trailing_trade
             print(f"[StopLoss] HOT POTATO trailing stop for {ticker} at {trailing_pct}%")

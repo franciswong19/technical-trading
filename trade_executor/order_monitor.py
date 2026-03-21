@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 import pytz
 import pandas_market_calendars as mcal
 
-from trade_executor.ibkr_client import IBKRClient
+from trade_executor.ibkr_client import IBKRClient, IBKRConnectionError
 from trade_executor.config import EXCHANGES
 
 
@@ -72,8 +72,11 @@ class OrderMonitor:
             # Sleep for the check interval (in 1-second increments for responsiveness).
             # Use ib.sleep() instead of time.sleep() to keep the asyncio event loop running,
             # which prevents IB Gateway from disconnecting due to missed heartbeats.
-            for _ in range(self.check_interval):
+            for i in range(self.check_interval):
                 self.client.ib.sleep(1)
+                # Periodic connection health check (every 60s)
+                if i % 60 == 0 and not self.client.ib.isConnected():
+                    raise IBKRConnectionError("IBKR connection lost during fill monitoring")
                 # Check fill during sleep
                 if self.client.is_filled(trade):
                     result['filled'] = True

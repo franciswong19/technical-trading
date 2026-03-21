@@ -19,7 +19,8 @@
       "Bash(git remote:*)",
       "Bash(mkdir:*)",
       "Bash(ls trade_executor/state/status/20260312-005*.filled.json 2>/dev/null; cat trade_executor/state/results/20260312-005.json 2>/dev/null || echo \"no result file\"; ls trade_executor/state/status/20260312-005*.clientids.json 2>/dev/null | xargs cat 2>/dev/null)",
-      "Bash(cat trade_executor/state/results/20260312-005.json && echo \"---\" && ls trade_executor/state/status/20260312-005*.filled.json | xargs -I{} sh -c 'echo {} && cat {}')"
+      "Bash(cat trade_executor/state/results/20260312-005.json && echo \"---\" && ls trade_executor/state/status/20260312-005*.filled.json | xargs -I{} sh -c 'echo {} && cat {}')",
+      "Bash(cat trade_executor/state/results/20260319-004*.json)"
     ]
   }
 }
