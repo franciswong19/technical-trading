@@ -13,6 +13,8 @@ import argparse
 import sys
 import os
 import json
+import asyncio
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
 import pytz
@@ -30,6 +32,92 @@ from trade_executor.quantity_calculator import calculate_sell_qty
 from trade_executor.order_monitor import OrderMonitor
 
 
+def _execute_account(i: int, account: dict, request: TradeRequest, tz, client_id_offset: int) -> tuple:
+    asyncio.set_event_loop(asyncio.new_event_loop())
+    account_id = account['account_id']
+    port = account['port']
+    client_id = BASE_CLIENT_ID + client_id_offset + i
+
+    account_result = AccountResult(account_id=account_id)
+    errors = []
+    client = IBKRClient(account_id, port, client_id)
+
+    try:
+        client.connect()
+
+        tp = request.ticker_params[0]
+        ticker = tp.ticker
+        ticker_result = TickerResult(ticker=ticker, action='SELL')
+
+        try:
+            holdings = client.get_position_qty(ticker)
+            qty = calculate_sell_qty(holdings, tp.fulfillment_pct, ticker)
+            ticker_result.target_qty = qty
+
+            if qty <= 0:
+                ticker_result.error = f"No shares to sell (holdings={holdings})"
+                account_result.ticker_results.append(ticker_result)
+            else:
+                # Cancel any open orders for this ticker (e.g. stop-loss) before selling
+                # to prevent IBKR from treating the combined sell orders as a short sale
+                client.cancel_orders_for_ticker(ticker)
+
+                # FAST SELL always uses midprice
+                trade = client.place_midprice_order(ticker, 'SELL', qty, request.exchange)
+                ticker_result.order_type_used = 'midprice'
+
+                monitor = OrderMonitor(
+                    client, FAST_CHECK_INTERVAL, DURATION_TIMED,
+                    request.exchange,
+                    deadline_minutes=request.duration_minutes,
+                )
+
+                mon_result = monitor.monitor_until_fill_or_deadline(trade, ticker)
+
+                if mon_result['filled']:
+                    fill_price = client.get_fill_price(mon_result['trade'])
+                    filled_qty = client.get_filled_qty(mon_result['trade'])
+                    ticker_result.filled_qty = filled_qty
+                    ticker_result.avg_fill_price = fill_price
+
+                elif mon_result['deadline_reached']:
+                    market_trade = monitor.escalate_to_market(
+                        mon_result['trade'], ticker, 'SELL', qty
+                    )
+                    ticker_result.escalated_to_market = True
+                    ticker_result.order_type_used = 'market'
+
+                    filled = client.wait_for_fill(market_trade, timeout_seconds=60)
+                    if filled:
+                        fill_price = client.get_fill_price(market_trade)
+                        filled_qty = client.get_filled_qty(market_trade)
+                        ticker_result.filled_qty = filled_qty
+                        ticker_result.avg_fill_price = fill_price
+                    else:
+                        ticker_result.error = "Market order did not fill within 60s"
+                        errors.append(f"{account_id}/{ticker}: Market order timeout")
+
+                account_result.ticker_results.append(ticker_result)
+
+        except OrderRejectedError as e:
+            ticker_result.error = str(e)
+            errors.append(f"{account_id}/{ticker}: {e}")
+            account_result.ticker_results.append(ticker_result)
+        except Exception as e:
+            ticker_result.error = str(e)
+            errors.append(f"{account_id}/{ticker}: {e}")
+            account_result.ticker_results.append(ticker_result)
+
+        stamp_ticker_completion(ticker_result, tz)
+
+    except IBKRConnectionError as e:
+        errors.append(f"{account_id}: Connection failed - {e}")
+    finally:
+        client.disconnect()
+
+    return account_result, errors
+
+
 def execute(request: TradeRequest, client_id_offset: int = 0) -> ExecutionResult:
     """Execute FAST SELL."""
     exchange_cfg = EXCHANGES[request.exchange]
@@ -44,93 +132,18 @@ def execute(request: TradeRequest, client_id_offset: int = 0) -> ExecutionResult
         request_type=request.request_type,
     )
 
-    for i, account in enumerate(request.accounts):
-        account_id = account['account_id']
-        port = account['port']
-        client_id = BASE_CLIENT_ID + client_id_offset + i
-
-        account_result = AccountResult(account_id=account_id)
-        client = IBKRClient(account_id, port, client_id)
-
-        try:
-            client.connect()
-
-            tp = request.ticker_params[0]
-            ticker = tp.ticker
-            ticker_result = TickerResult(ticker=ticker, action='SELL')
-
-            try:
-                holdings = client.get_position_qty(ticker)
-                qty = calculate_sell_qty(holdings, tp.fulfillment_pct, ticker)
-                ticker_result.target_qty = qty
-
-                if qty <= 0:
-                    ticker_result.error = f"No shares to sell (holdings={holdings})"
-                    account_result.ticker_results.append(ticker_result)
-                else:
-                    # Cancel any open orders for this ticker (e.g. stop-loss) before selling
-                    # to prevent IBKR from treating the combined sell orders as a short sale
-                    client.cancel_orders_for_ticker(ticker)
-
-                    # FAST SELL always uses midprice
-                    trade = client.place_midprice_order(ticker, 'SELL', qty, request.exchange)
-                    ticker_result.order_type_used = 'midprice'
-
-                    monitor = OrderMonitor(
-                        client, FAST_CHECK_INTERVAL, DURATION_TIMED,
-                        request.exchange,
-                        deadline_minutes=request.duration_minutes,
-                    )
-
-                    mon_result = monitor.monitor_until_fill_or_deadline(trade, ticker)
-
-                    if mon_result['filled']:
-                        fill_price = client.get_fill_price(mon_result['trade'])
-                        filled_qty = client.get_filled_qty(mon_result['trade'])
-                        ticker_result.filled_qty = filled_qty
-                        ticker_result.avg_fill_price = fill_price
-
-                    elif mon_result['deadline_reached']:
-                        market_trade = monitor.escalate_to_market(
-                            mon_result['trade'], ticker, 'SELL', qty
-                        )
-                        ticker_result.escalated_to_market = True
-                        ticker_result.order_type_used = 'market'
-
-                        filled = client.wait_for_fill(market_trade, timeout_seconds=60)
-                        if filled:
-                            fill_price = client.get_fill_price(market_trade)
-                            filled_qty = client.get_filled_qty(market_trade)
-                            ticker_result.filled_qty = filled_qty
-                            ticker_result.avg_fill_price = fill_price
-                        else:
-                            ticker_result.error = "Market order did not fill within 60s"
-                            result.errors.append(f"{account_id}/{ticker}: Market order timeout")
-
-                    account_result.ticker_results.append(ticker_result)
-
-            except OrderRejectedError as e:
-                ticker_result.error = str(e)
-                result.errors.append(f"{account_id}/{ticker}: {e}")
-                account_result.ticker_results.append(ticker_result)
-            except Exception as e:
-                ticker_result.error = str(e)
-                result.errors.append(f"{account_id}/{ticker}: {e}")
-                account_result.ticker_results.append(ticker_result)
-
-            stamp_ticker_completion(ticker_result, tz)
-
-        except IBKRConnectionError as e:
-            result.errors.append(f"{account_id}: Connection failed - {e}")
-            result.status = 'FAILED'
-        finally:
-            client.disconnect()
-
-        result.account_results.append(account_result)
+    with ThreadPoolExecutor(max_workers=len(request.accounts)) as pool:
+        futures = {
+            pool.submit(_execute_account, i, account, request, tz, client_id_offset): account
+            for i, account in enumerate(request.accounts)
+        }
+        for f in as_completed(futures):
+            account_result, errors = f.result()
+            result.account_results.append(account_result)
+            result.errors.extend(errors)
 
     result.completed_at = datetime.now(tz).isoformat()
-    if result.status != 'FAILED':
-        result.status = 'PARTIAL' if result.errors else 'COMPLETED'
+    result.status = 'PARTIAL' if result.errors else 'COMPLETED'
 
     return result
 

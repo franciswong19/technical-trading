@@ -269,7 +269,7 @@ class IBKRClient:
         return self._place_and_verify(contract, order, ticker)
 
     def place_trailing_stop_order(self, ticker: str, action: str, qty: int,
-                                  trail_pct: float, exchange: str) -> 'Trade':
+                                  trail_pct: float, exchange: str, tif: str = 'DAY') -> 'Trade':
         """Place a trailing stop order with percentage-based trail.
 
         Args:
@@ -288,6 +288,7 @@ class IBKRClient:
             totalQuantity=qty,
             orderType='TRAIL',
             trailingPercent=trail_pct,
+            tif=tif,
         )
         return self._place_and_verify(contract, order, ticker)
 
@@ -307,6 +308,7 @@ class IBKRClient:
         """
         contract = self._create_contract(ticker, exchange)
         order = StopOrder(action, qty, round(stop_price, 2))
+        order.tif = 'GTC'
         return self._place_and_verify(contract, order, ticker)
 
     # ==========================================
@@ -516,7 +518,7 @@ class IBKRClient:
         while elapsed < timeout_seconds:
             self.ib.sleep(1)
             elapsed += 1
-            if trade.isDone():
+            if self.is_filled(trade):
                 return True
         return False
 
