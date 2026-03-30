@@ -1,0 +1,21 @@
+# TechnicalTrading dependencies
+# Install with: pip install -r requirements.txt
+#
+# Note: TA-Lib requires the C library to be installed first.
+#   Windows: download wheel from https://github.com/cgohlke/talib-build/releases
+#   Linux/macOS: install via system package manager, then pip install TA-Lib
+#
+# Note: ibapi is bundled with the IB Gateway/TWS install and may not be on PyPI.
+#   If missing, install from your IB Gateway/TWS directory.
+
+ib_insync==0.9.86
+pandas==2.2.2
+pandas_market_calendars==5.1.3
+numpy==1.26.4
+pytz==2024.1
+TA-Lib==0.4.32
+plotly==5.22.0
+requests==2.32.2
+gspread==6.2.1
+oauth2client==4.1.3
+APScheduler==3.11.1
