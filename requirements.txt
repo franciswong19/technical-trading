@@ -1,9 +1,8 @@
 # TechnicalTrading dependencies
 # Install with: pip install -r requirements.txt
 #
-# Note: TA-Lib-bin is a pre-built binary wheel that bundles the C library.
-#   Use this instead of TA-Lib to avoid needing a C compiler on Windows.
-#   If using conda: conda install -c conda-forge ta-lib
+# Note: TA-Lib is NOT on PyPI — install manually before running pip install:
+#   conda install -c conda-forge ta-lib
 #
 # Note: ibapi is bundled with the IB Gateway/TWS install and may not be on PyPI.
 #   If missing, install from your IB Gateway/TWS directory.
@@ -13,7 +12,7 @@ pandas==2.2.2
 pandas_market_calendars==5.1.3
 numpy==1.26.4
 pytz==2024.1
-TA-Lib-bin
+# TA-Lib: install manually — see note above
 plotly==5.22.0
 requests==2.32.2
 gspread==6.2.1
