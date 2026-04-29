@@ -72,6 +72,7 @@ CONFIG = {
     # ═══════════════════════════════════════
     "MIN_R_SQUARED": 0.50,
     "CHOPPY_R_SQUARED_CEILING": 0.30,
+    "TREND_TOLERANCE_PCT": 0.0025,     # allow up to 0.25% pullback and still count as higher/lower
 
     # ═══════════════════════════════════════
     # SLOPE CONSTRAINTS (% per bar, per tier)
@@ -102,6 +103,12 @@ CONFIG = {
     },
     "MIN_WIDTH_ATR_MULTIPLE": 2.0,  # same across all tiers
     "MAX_WIDTH_ATR_MULTIPLE": 8.0,
+
+    # ═══════════════════════════════════════
+    # PRIMARY TRENDLINE FITTING
+    # ═══════════════════════════════════════
+    "TRENDLINE_OUTLIER_ATR_MULTIPLE": 2.0,   # pivot residual > N×ATR → excluded from fit
+    "TRENDLINE_MIN_CORRECT_SIDE_PCT": 0.70,  # ≥70% of pivots must be on correct side
 
     # ═══════════════════════════════════════
     # PARALLEL VALIDATION
@@ -174,6 +181,16 @@ CONFIG = {
     "GAP_THRESHOLD_ATR_MULTIPLE": 2.0,
     "LOW_LIQUIDITY_VOLUME": 100_000,
     "ELEVATED_VOL_RATIO": 2.0,
+
+    # ═══════════════════════════════════════
+    # VOLUME ANALYSIS (v2 — Sections 3.7, 4.2 Step 5, 5.9, 5.10, 8.2.1)
+    # ═══════════════════════════════════════
+    "VOLUME_MA_PERIOD": 20,                  # period for average volume baseline (SMA)
+    "PIVOT_VOLUME_NEIGHBORHOOD": 3,          # bars on each side for pivot volume averaging
+    "VOLUME_TREND_RATIO_THRESHOLD": 1.10,    # with-trend/counter-trend vol ratio for confirmation
+    "VOLUME_CONFIDENCE_PENALTY": 0.15,       # reduce regime confidence by 15% if volume not confirmed
+    "OBV_ENABLED": True,                     # compute OBV and OBV trendline analysis
+    "VOLUME_CLIMAX_MULTIPLIER": 3.0,         # >this × avg_vol = climax caution flag (Bulkowski)
 }
 
 

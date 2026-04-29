@@ -12,6 +12,7 @@ from datetime import timedelta
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import pandas_market_calendars as mcal
 
 project_root = Path(__file__).resolve().parent.parent
@@ -33,6 +34,13 @@ SUPPORT_LINE_COLOR = '#808080'
 RESISTANCE_LINE_COLOR = '#FFA500'
 CANDLE_UP_COLOR = '#26a69a'
 CANDLE_DOWN_COLOR = '#ef5350'
+
+# v2 volume annotation colors
+DIVERGENCE_COLOR = '#dc3545'           # red flag for bearish divergence
+CONFIRMATION_COLOR = '#28a745'         # green flag for bullish confirmation
+CLIMAX_COLOR = '#FFC107'               # yellow flag for volume climax caution
+OBV_LINE_COLOR = '#9467bd'             # purple for OBV series
+OBV_TRENDLINE_COLOR = '#5d3a9c'        # darker purple for OBV trendline
 
 
 def build_ticker_charts(ohlc_data: dict[str, pd.DataFrame],
@@ -75,13 +83,35 @@ def build_ticker_charts(ohlc_data: dict[str, pd.DataFrame],
 def _build_tier_chart(ohlc_df: pd.DataFrame, tier_result: TierResult,
                       tier_name: str, ticker: str,
                       reference_date: str) -> go.Figure:
-    """Build a single Plotly OHLC chart with overlaid analysis."""
-    fig = go.Figure()
+    """Build a Plotly chart with price candles + trendlines + S/R + OBV subplot."""
+    # Normalize timestamps to tz-naive US/Eastern so Plotly treats them as datetime
+    ohlc_df = _normalize_timestamps(ohlc_df)
+
     tier_color = TIER_COLORS[tier_name]
     tier_label = tier_name.replace('_', ' ').title()
 
+    # Determine if we need an OBV subplot (v2 §5.10)
+    has_obv = (
+        tier_result.trend_channel is not None
+        and tier_result.trend_channel.obv_analysis is not None
+        and tier_result.trend_channel.obv_analysis.obv_series
+    )
+
+    if has_obv:
+        fig = make_subplots(
+            rows=2, cols=1,
+            shared_xaxes=True,
+            row_heights=[0.75, 0.25],
+            vertical_spacing=0.04,
+            subplot_titles=('', 'On-Balance Volume (OBV)'),
+        )
+        price_row = 1
+    else:
+        fig = go.Figure()
+        price_row = None  # single-row mode
+
     # 1. OHLC candlestick bars
-    fig.add_trace(go.Candlestick(
+    candle = go.Candlestick(
         x=ohlc_df['t'],
         open=ohlc_df['open'],
         high=ohlc_df['high'],
@@ -93,7 +123,11 @@ def _build_tier_chart(ohlc_df: pd.DataFrame, tier_result: TierResult,
         decreasing_fillcolor=CANDLE_DOWN_COLOR,
         name='OHLC',
         showlegend=False,
-    ))
+    )
+    if has_obv:
+        fig.add_trace(candle, row=price_row, col=1)
+    else:
+        fig.add_trace(candle)
 
     # Compute next trading day for line extension
     next_td = _get_next_trading_day_ts(ohlc_df, reference_date)
@@ -101,27 +135,44 @@ def _build_tier_chart(ohlc_df: pd.DataFrame, tier_result: TierResult,
     # 2. Trend channel lines
     if tier_result.trend_channel is not None:
         _add_channel_traces(fig, tier_result.trend_channel, ohlc_df,
-                           tier_color, tier_label, next_td, tier_result)
+                           tier_color, tier_label, next_td, tier_result,
+                           row=price_row)
 
     # 3. Fan lines
     if tier_result.fan_lines:
+        scale_mode = tier_result.scale_mode if tier_result else 'arithmetic'
         for i, fan_line in enumerate(tier_result.fan_lines):
             _add_trendline_trace(fig, fan_line, ohlc_df, tier_color,
                                 f'{tier_label} Fan {i+1}', next_td,
-                                dash='dash')
+                                dash='dash', row=price_row, scale_mode=scale_mode)
 
     # 4. Horizontal range (SIDEWAYS regime)
     if tier_result.horizontal_range is not None:
         hr = tier_result.horizontal_range
         _add_horizontal_range(fig, hr.upper_boundary, hr.lower_boundary,
-                              ohlc_df, tier_color)
+                              ohlc_df, tier_color, row=price_row)
 
     # 5. S/R zones
     for zone in tier_result.support_resistance_zones:
-        _add_sr_zone_trace(fig, zone, ohlc_df, next_td)
+        _add_sr_zone_trace(fig, zone, ohlc_df, next_td, row=price_row)
 
     # 6. Pivot markers
-    _add_pivot_markers(fig, tier_result.pivot_highs, tier_result.pivot_lows)
+    _add_pivot_markers(fig, tier_result.pivot_highs, tier_result.pivot_lows,
+                       ohlc_df, row=price_row)
+
+    # 7. v2: Volume divergence annotations at divergent pivots
+    if tier_result.trend_channel is not None:
+        _add_divergence_annotations(fig, tier_result, ohlc_df, row=price_row)
+
+    # 8. v2: Volume climax annotation at breakout bar
+    if tier_result.break_info is not None:
+        _add_climax_annotation(fig, tier_result.break_info, ohlc_df,
+                              row=price_row)
+
+    # 9. v2: OBV subplot
+    if has_obv:
+        _add_obv_subplot(fig, tier_result.trend_channel.obv_analysis,
+                         ohlc_df, row=2)
 
     # Layout
     regime_text = ''
@@ -136,21 +187,15 @@ def _build_tier_chart(ohlc_df: pd.DataFrame, tier_result: TierResult,
     if tier_result.trend_channel:
         channel_text = f" | {tier_result.trend_channel.channel_geometry}"
 
+    height = 650 if has_obv else 500
+
     fig.update_layout(
         title=f'{ticker} — {tier_label}{regime_text}{channel_text}',
-        height=500,
+        height=height,
         width=1000,
-        margin=dict(t=40, b=40, l=60, r=20),
+        margin=dict(t=50, b=40, l=60, r=20),
         template='plotly_white',
         hovermode='x unified',
-        xaxis=dict(
-            title=tier_result.interval + ' bars',
-            rangeslider_visible=False,
-        ),
-        yaxis=dict(
-            title='Price',
-            side='right',
-        ),
         legend=dict(
             orientation='h',
             yanchor='bottom',
@@ -161,33 +206,99 @@ def _build_tier_chart(ohlc_df: pd.DataFrame, tier_result: TierResult,
         ),
     )
 
+    is_intraday = tier_result.interval in ('15min', '1hour')
+    rangebreaks = _build_rangebreaks(ohlc_df, tier_result.interval)
+    # '%b %d' avoids the literal \n that breaks HTML rendering; time shown on hover
+    tickfmt = '%b %d' if is_intraday else '%Y-%m-%d'
+
+    xaxis_common = dict(
+        rangeslider_visible=False,
+        rangebreaks=rangebreaks,
+        tickformat=tickfmt,
+        tickangle=-45,
+        tickfont=dict(size=9),
+    )
+
+    if has_obv:
+        fig.update_xaxes(**xaxis_common, row=1, col=1)
+        fig.update_xaxes(**xaxis_common, title=tier_result.interval + ' bars', row=2, col=1)
+        fig.update_yaxes(title='Price', side='right', row=1, col=1)
+        fig.update_yaxes(title='OBV', side='right', row=2, col=1)
+    else:
+        fig.update_layout(
+            xaxis=dict(**xaxis_common, title=tier_result.interval + ' bars'),
+            yaxis=dict(title='Price', side='right'),
+        )
+
     return fig
 
 
+def _add_trace(fig, trace, row=None):
+    """Helper that adds a trace to the right subplot row (or single-row fig)."""
+    if row is not None:
+        fig.add_trace(trace, row=row, col=1)
+    else:
+        fig.add_trace(trace)
+
+
+def _ts_ms(ts) -> np.datetime64:
+    """Convert any datetime-like scalar to numpy datetime64[ms].
+
+    Pivot/annotation timestamps come from the analysis engine, which ran on the
+    original (non-normalized) ohlc data. Without this conversion, datetime64[ns]
+    scalars in a Python list are misread by Plotly as millisecond integers,
+    placing markers billions of years in the future.
+
+    Must mirror _normalize_timestamps: convert to Eastern first, then strip tz,
+    so pivot markers align with the OHLC bars on the chart x-axis.
+    """
+    pt = pd.Timestamp(ts)
+    if pt.tzinfo is not None:
+        pt = pt.tz_convert('America/New_York').tz_localize(None)
+    return np.datetime64(pt, 'ms')
+
+
 def _add_channel_traces(fig, channel: Channel, ohlc_df, color, label,
-                        next_td, tier_result: TierResult):
+                        next_td, tier_result: TierResult, row=None):
     """Add primary and opposite channel lines to the figure."""
     # Determine if there's a breakout (trendlines become dotted after)
     break_bar = None
     if tier_result.break_info and tier_result.break_info.break_bar_index is not None:
         break_bar = tier_result.break_info.break_bar_index
 
+    scale_mode = tier_result.scale_mode if tier_result else 'arithmetic'
+
     for line, line_label in [(channel.primary_line, f'{label} Primary'),
                               (channel.opposite_line, f'{label} Opposite')]:
         if line is None:
             continue
         _add_trendline_trace(fig, line, ohlc_df, color, line_label,
-                            next_td, dash='solid', break_bar=break_bar)
+                            next_td, dash='solid', break_bar=break_bar, row=row,
+                            scale_mode=scale_mode)
 
 
 def _add_trendline_trace(fig, line: Trendline, ohlc_df, color, name,
-                         next_td, dash='solid', break_bar=None):
+                         next_td, dash='solid', break_bar=None, row=None,
+                         scale_mode='arithmetic'):
     """Add a trendline trace, extending to the next trading day.
 
     If break_bar is set, line becomes dotted from that bar onwards.
+    If scale_mode is 'log', prices are converted from log space to price space.
     """
     if not line.anchor_points:
         return
+
+    # For log scale, we need the inverse function to convert prices back
+    inverse_fn = None
+    if scale_mode == 'log':
+        inverse_fn = np.exp
+
+    def get_price(bar_idx):
+        """Get trendline price at bar_idx, converting from log space if needed."""
+        p = line.price_at(bar_idx)
+        if inverse_fn is not None:
+            p = inverse_fn(p)
+        return p
 
     first_bar = line.anchor_points[0].bar_index
     last_bar = len(ohlc_df) - 1
@@ -199,55 +310,55 @@ def _add_trendline_trace(fig, line: Trendline, ohlc_df, color, name,
         solid_prices = []
         for i in range(first_bar, min(break_bar + 1, len(timestamps))):
             solid_ts.append(timestamps[i])
-            solid_prices.append(line.price_at(i))
+            solid_prices.append(get_price(i))
 
-        fig.add_trace(go.Scatter(
+        _add_trace(fig, go.Scatter(
             x=solid_ts, y=solid_prices,
             mode='lines', name=name,
             line=dict(color=color, width=1.5, dash='solid'),
             showlegend=True,
-        ))
+        ), row=row)
 
         # Dotted portion: break_bar to extension
         dotted_ts = []
         dotted_prices = []
         for i in range(break_bar, len(timestamps)):
             dotted_ts.append(timestamps[i])
-            dotted_prices.append(line.price_at(i))
+            dotted_prices.append(get_price(i))
         # Extend to next trading day
         if next_td is not None:
             ext_bar = last_bar + 1
             dotted_ts.append(next_td)
-            dotted_prices.append(line.price_at(ext_bar))
+            dotted_prices.append(get_price(ext_bar))
 
-        fig.add_trace(go.Scatter(
+        _add_trace(fig, go.Scatter(
             x=dotted_ts, y=dotted_prices,
             mode='lines', name=f'{name} (broken)',
             line=dict(color=color, width=1.5, dash='dot'),
             showlegend=False,
-        ))
+        ), row=row)
     else:
         # No breakout — draw full line solid + extension
         ts_list = []
         price_list = []
         for i in range(first_bar, len(timestamps)):
             ts_list.append(timestamps[i])
-            price_list.append(line.price_at(i))
+            price_list.append(get_price(i))
         # Extend to next trading day
         if next_td is not None:
             ext_bar = last_bar + 1
             ts_list.append(next_td)
-            price_list.append(line.price_at(ext_bar))
+            price_list.append(get_price(ext_bar))
 
-        fig.add_trace(go.Scatter(
+        _add_trace(fig, go.Scatter(
             x=ts_list, y=price_list,
             mode='lines', name=name,
             line=dict(color=color, width=1.5, dash=dash),
             showlegend=True,
-        ))
+        ), row=row)
 
 
-def _add_sr_zone_trace(fig, zone: SRZone, ohlc_df, next_td):
+def _add_sr_zone_trace(fig, zone: SRZone, ohlc_df, next_td, row=None):
     """Add a semi-transparent S/R zone band."""
     if ohlc_df.empty:
         return
@@ -262,17 +373,17 @@ def _add_sr_zone_trace(fig, zone: SRZone, ohlc_df, next_td):
     label = f"S {zone.midpoint:.2f}" if is_support else f"R {zone.midpoint:.2f}"
 
     # Upper boundary
-    fig.add_trace(go.Scatter(
+    _add_trace(fig, go.Scatter(
         x=timestamps,
         y=[zone.upper] * len(timestamps),
         mode='lines',
         line=dict(color=line_color, width=0.5, dash='dot'),
         showlegend=False,
         hoverinfo='skip',
-    ))
+    ), row=row)
 
     # Lower boundary with fill to upper
-    fig.add_trace(go.Scatter(
+    _add_trace(fig, go.Scatter(
         x=timestamps,
         y=[zone.lower] * len(timestamps),
         mode='lines',
@@ -281,58 +392,329 @@ def _add_sr_zone_trace(fig, zone: SRZone, ohlc_df, next_td):
         line=dict(color=line_color, width=0.5, dash='dot'),
         name=label,
         showlegend=True,
-    ))
+    ), row=row)
 
 
-def _add_horizontal_range(fig, upper, lower, ohlc_df, color):
+def _add_horizontal_range(fig, upper, lower, ohlc_df, color, row=None):
     """Add horizontal range boundaries for SIDEWAYS regime."""
     timestamps = list(ohlc_df['t'].values)
-    fig.add_trace(go.Scatter(
+    _add_trace(fig, go.Scatter(
         x=timestamps, y=[upper] * len(timestamps),
         mode='lines', name='Range High',
         line=dict(color=color, width=1, dash='dash'),
         showlegend=True,
-    ))
-    fig.add_trace(go.Scatter(
+    ), row=row)
+    _add_trace(fig, go.Scatter(
         x=timestamps, y=[lower] * len(timestamps),
         mode='lines', name='Range Low',
         line=dict(color=color, width=1, dash='dash'),
         showlegend=True,
-    ))
+    ), row=row)
 
 
-def _add_pivot_markers(fig, pivot_highs, pivot_lows):
-    """Add small triangle markers at pivot points."""
+def _add_pivot_markers(fig, pivot_highs, pivot_lows, ohlc_df, row=None):
+    """Add small triangle markers at pivot points.
+
+    Uses bar_index to look up timestamps directly from the normalized ohlc_df,
+    guaranteeing alignment with the candlestick x-axis regardless of how the
+    pivot timestamps were stored.
+    """
+    timestamps = ohlc_df['t'].values
+    n = len(timestamps)
+
     if pivot_highs:
-        fig.add_trace(go.Scatter(
-            x=[p.timestamp for p in pivot_highs],
-            y=[p.price for p in pivot_highs],
+        valid = [p for p in pivot_highs if p.bar_index < n]
+        _add_trace(fig, go.Scatter(
+            x=[timestamps[p.bar_index] for p in valid],
+            y=[p.price for p in valid],
             mode='markers',
             marker=dict(symbol='triangle-down', size=6, color='red', opacity=0.6),
             name='Pivot High',
             showlegend=False,
             hovertemplate='Pivot High<br>Price: %{y:.2f}<extra></extra>',
-        ))
+        ), row=row)
 
     if pivot_lows:
-        fig.add_trace(go.Scatter(
-            x=[p.timestamp for p in pivot_lows],
-            y=[p.price for p in pivot_lows],
+        valid = [p for p in pivot_lows if p.bar_index < n]
+        _add_trace(fig, go.Scatter(
+            x=[timestamps[p.bar_index] for p in valid],
+            y=[p.price for p in valid],
             mode='markers',
             marker=dict(symbol='triangle-up', size=6, color='green', opacity=0.6),
             name='Pivot Low',
             showlegend=False,
             hovertemplate='Pivot Low<br>Price: %{y:.2f}<extra></extra>',
-        ))
+        ), row=row)
+
+
+# ============================================================================
+# v2 volume annotations (Section 5.9, 5.10, 8.2.1)
+# ============================================================================
+
+def _add_divergence_annotations(fig, tier_result: TierResult, ohlc_df, row=None):
+    """Add red flag annotations at divergent pivot anchors (Section 5.9)."""
+    channel = tier_result.trend_channel
+    if channel is None or channel.volume_divergence is None:
+        return
+    if channel.volume_divergence.divergence_warning == 'NONE':
+        return
+
+    direction = (tier_result.regime.trend_direction
+                 if tier_result.regime else None)
+    if direction == 'UPTREND':
+        check_pivots = sorted(tier_result.pivot_highs, key=lambda p: p.bar_index)
+    elif direction == 'DOWNTREND':
+        check_pivots = sorted(tier_result.pivot_lows, key=lambda p: p.bar_index)
+    else:
+        return
+
+    for detail in channel.volume_divergence.details:
+        if not detail.get('divergence'):
+            continue
+
+        # Find the matching pivot to position the annotation
+        match = next(
+            (p for p in check_pivots
+             if abs(p.price - detail['price']) < 0.01),
+            None,
+        )
+        if match is None:
+            continue
+
+        # Offset so the flag sits above (uptrend high) or below (downtrend low)
+        offset_dir = 1 if direction == 'UPTREND' else -1
+        if match.bar_index >= len(ohlc_df):
+            continue
+        _add_trace(fig, go.Scatter(
+            x=[ohlc_df['t'].values[match.bar_index]],
+            y=[match.price * (1.0 + 0.005 * offset_dir)],
+            mode='markers+text',
+            marker=dict(symbol='triangle-down' if offset_dir > 0 else 'triangle-up',
+                        size=12, color=DIVERGENCE_COLOR),
+            text=['VD'],
+            textposition='top center' if offset_dir > 0 else 'bottom center',
+            textfont=dict(size=9, color=DIVERGENCE_COLOR),
+            hovertemplate=(
+                f"Volume Divergence<br>"
+                f"Price: {detail['price']:.2f}<br>"
+                f"Volume ratio: {detail['volume_ratio']:.2f}<br>"
+                f"Prior pivot vol: {detail['prior_pivot_volume']:.0f}<extra></extra>"
+            ),
+            showlegend=False,
+        ), row=row)
+
+
+def _add_climax_annotation(fig, break_info, ohlc_df, row=None):
+    """Add yellow CLIMAX annotation at breakout bar (Section 8.2.1)."""
+    if not break_info.volume_climax_caution:
+        return
+    if break_info.break_bar_index is None:
+        return
+    if break_info.break_bar_index >= len(ohlc_df):
+        return
+
+    bar_ts = ohlc_df['t'].values[break_info.break_bar_index]
+    bar_price = ohlc_df['high'].values[break_info.break_bar_index]
+    _add_trace(fig, go.Scatter(
+        x=[bar_ts],
+        y=[bar_price * 1.01],
+        mode='markers+text',
+        marker=dict(symbol='star', size=14, color=CLIMAX_COLOR,
+                    line=dict(color='black', width=1)),
+        text=['CLIMAX'],
+        textposition='top center',
+        textfont=dict(size=10, color='#666'),
+        hovertemplate=(
+            "Volume Climax Caution<br>"
+            "Heavy breakout volume (>3x avg)<br>"
+            "Per Bulkowski: triples failure rates<extra></extra>"
+        ),
+        showlegend=False,
+    ), row=row)
+
+
+def _add_obv_subplot(fig, obv_analysis, ohlc_df, row=2):
+    """Plot OBV series + OBV trendline in the lower subplot row (Section 5.10)."""
+    if not obv_analysis or not obv_analysis.obv_series:
+        return
+
+    timestamps = list(ohlc_df['t'].values)
+    obv_series = obv_analysis.obv_series
+    # Truncate to match in case of length mismatch
+    n = min(len(timestamps), len(obv_series))
+    timestamps = timestamps[:n]
+    obv_values = obv_series[:n]
+
+    # OBV line
+    fig.add_trace(go.Scatter(
+        x=timestamps, y=obv_values,
+        mode='lines', name='OBV',
+        line=dict(color=OBV_LINE_COLOR, width=1.2),
+        showlegend=False,
+        hovertemplate='OBV: %{y:,.0f}<extra></extra>',
+    ), row=row, col=1)
+
+    # OBV trendline overlay
+    if obv_analysis.obv_trendline is not None:
+        line = obv_analysis.obv_trendline
+        if line.anchor_points:
+            first_bar = line.anchor_points[0].bar_index
+            ts_list = []
+            value_list = []
+            for i in range(first_bar, n):
+                ts_list.append(timestamps[i])
+                value_list.append(line.price_at(i))
+            fig.add_trace(go.Scatter(
+                x=ts_list, y=value_list,
+                mode='lines', name='OBV Trendline',
+                line=dict(color=OBV_TRENDLINE_COLOR, width=1.2, dash='dash'),
+                showlegend=False,
+            ), row=row, col=1)
+
+
+def build_explanation_charts(df: pd.DataFrame, tier_result: TierResult,
+                             ticker: str,
+                             reference_date: str = '') -> list[tuple[str, str]]:
+    """Build 6 progressive charts for the explanation document.
+
+    Each chart adds one more layer of overlay, letting the reader see exactly
+    how each element is constructed on top of the raw price data.
+
+    Returns:
+        List of (stage_title, plotly_html_fragment) tuples.
+        The first stage includes the Plotly CDN script; subsequent ones do not.
+    """
+    import copy
+
+    def _strip(pivots=True, channel=True, sr=True, fan=True,
+               vol_annot=True, primary_only=False):
+        """Shallow-copy tier_result with selected features cleared."""
+        tr = copy.copy(tier_result)
+
+        if not pivots:
+            tr.pivot_highs = []
+            tr.pivot_lows = []
+
+        if not channel:
+            tr.trend_channel = None
+            tr.trailing_fit = None
+        else:
+            if tr.trend_channel is not None:
+                ch = copy.copy(tr.trend_channel)
+                if primary_only:
+                    ch.opposite_line = None
+                if not vol_annot:
+                    ch.volume_divergence = None
+                    ch.obv_analysis = None
+                tr.trend_channel = ch
+
+        if not sr:
+            tr.support_resistance_zones = []
+
+        if not fan:
+            tr.fan_lines = []
+            tr.fan_exhausted = False
+
+        if not vol_annot:
+            tr.break_info = None
+
+        return tr
+
+    stages_config = [
+        ('Stage 1: Raw OHLC (15-min bars)',
+         _strip(pivots=False, channel=False, sr=False, fan=False, vol_annot=False)),
+        ('Stage 2: + Pivot Points',
+         _strip(pivots=True, channel=False, sr=False, fan=False, vol_annot=False)),
+        ('Stage 3: + Primary Trendline',
+         _strip(pivots=True, channel=True, sr=False, fan=False, vol_annot=False, primary_only=True)),
+        ('Stage 4: + Full Channel',
+         _strip(pivots=True, channel=True, sr=False, fan=False, vol_annot=False)),
+        ('Stage 5: + Support & Resistance Zones',
+         _strip(pivots=True, channel=True, sr=True, fan=False, vol_annot=False)),
+        ('Stage 6: Final Chart (All Overlays)',
+         tier_result),
+    ]
+
+    result = []
+    for i, (title, tr) in enumerate(stages_config):
+        if tr is None:
+            result.append((title, '<p>No data for this stage.</p>'))
+            continue
+        fig = _build_tier_chart(df, tr, 'short_term', ticker, reference_date)
+        fig.update_layout(title=f'{ticker} — {title}')
+        include_js = 'cdn' if i == 0 else False
+        html = fig.to_html(full_html=False, include_plotlyjs=include_js)
+        result.append((title, html))
+
+    return result
+
+
+def _normalize_timestamps(df: pd.DataFrame) -> pd.DataFrame:
+    """Normalize timestamps for Plotly: strip timezone, then convert to datetime64[ms].
+
+    Plotly's Candlestick handles a pandas Series of datetime64[ns] correctly, but
+    Scatter traces receive individual numpy scalars from .values[i]. A datetime64[ns]
+    scalar is treated as an integer (ms) by Plotly, placing lines billions of years
+    in the future. datetime64[ms] scalars are interpreted correctly.
+    """
+    df = df.copy()
+    col = df['t']
+    if pd.api.types.is_datetime64_any_dtype(col):
+        if hasattr(col.dtype, 'tz') and col.dtype.tz is not None:
+            col = col.dt.tz_convert('America/New_York').dt.tz_localize(None)
+        df['t'] = col.astype('datetime64[ms]')
+    return df
+
+
+def _build_rangebreaks(df: pd.DataFrame, interval: str) -> list:
+    """Build Plotly rangebreaks: weekends, overnight hours, and NYSE holidays."""
+    breaks = [dict(bounds=['sat', 'mon'])]
+    if interval not in ('15min', '1hour'):
+        return breaks
+
+    breaks.append(dict(bounds=[16, 9.5], pattern='hour'))
+
+    try:
+        start = pd.Timestamp(df['t'].min()).normalize()
+        end = pd.Timestamp(df['t'].max()).normalize()
+        cal = mcal.get_calendar('NYSE')
+        schedule = cal.schedule(
+            start_date=start.strftime('%Y-%m-%d'),
+            end_date=end.strftime('%Y-%m-%d'),
+        )
+        trading_days = set(schedule.index.strftime('%Y-%m-%d'))
+        all_weekdays = pd.bdate_range(
+            start.strftime('%Y-%m-%d'),
+            end.strftime('%Y-%m-%d'),
+        )
+        holidays = [
+            d.strftime('%Y-%m-%d')
+            for d in all_weekdays
+            if d.strftime('%Y-%m-%d') not in trading_days
+        ]
+        if holidays:
+            # Only remove trading hours (09:30–16:00) on holidays.
+            # The overnight rangebreak already covers 16:00–09:30 on each side,
+            # so a full-day values break (default dvalue=86400000ms) double-removes
+            # 17.5h of overnight on both sides, causing Plotly to over-compress the
+            # surrounding weeks (the Apr 3 / Apr 6 visual collision).
+            breaks.append(dict(
+                values=[f'{h}T09:30:00' for h in holidays],
+                dvalue=23400000,  # 6.5 trading hours in ms
+            ))
+    except Exception:
+        pass
+
+    return breaks
 
 
 def _get_next_trading_day_ts(ohlc_df, reference_date):
-    """Get the next trading day timestamp for line extension."""
+    """Get the next trading day timestamp for line extension (tz-naive)."""
     try:
         if reference_date:
             ref = pd.Timestamp(reference_date)
         elif not ohlc_df.empty:
-            ref = pd.Timestamp(ohlc_df['t'].values[-1])
+            ref = pd.Timestamp(ohlc_df['t'].iloc[-1])
         else:
             return None
 
@@ -340,7 +722,11 @@ def _get_next_trading_day_ts(ohlc_df, reference_date):
         end = ref + timedelta(days=10)
         schedule = cal.schedule(start_date=ref + timedelta(days=1), end_date=end)
         if not schedule.empty:
-            return schedule.index[0]
+            ts = schedule.index[0]
+            if ts.tzinfo is not None:
+                ts = ts.tz_localize(None)
+            # Return as datetime64[ms] to match normalized ohlc timestamps
+            return np.datetime64(ts, 'ms')
     except Exception:
         pass
     return None

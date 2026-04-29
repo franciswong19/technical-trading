@@ -11,6 +11,7 @@ Usage:
 
 import sys
 import time
+import argparse
 from pathlib import Path
 from datetime import datetime, timedelta
 
@@ -21,8 +22,9 @@ from utils import utils_gsheet_handler
 from utils.utils_ibkr_portfolio import connect_ibkr, disconnect_ibkr
 from utils.utils_trendline_engine import analyze_ticker
 from autotrading.data_fetcher import fetch_all_tiers, resolve_reference_date
-from autotrading.chart_builder import build_ticker_charts
+from autotrading.chart_builder import build_ticker_charts, build_explanation_charts
 from autotrading.report_generator import build_html_report, save_report, email_report
+from autotrading.explanation_generator import generate_explanation, save_explanation
 
 # ==========================================
 # CONFIGURATION
@@ -74,17 +76,32 @@ def parse_params(df):
 
 
 def main():
+    parser = argparse.ArgumentParser(description='Trendline & S/R Analysis Report')
+    parser.add_argument('--tickers', nargs='+', metavar='TICKER',
+                        help='Override tickers (e.g. --tickers QQQ SPY)')
+    parser.add_argument('--date', metavar='YYYY-MM-DD',
+                        help='Override reference date (e.g. --date 2026-04-25)')
+    args = parser.parse_args()
+
     print("=" * 60)
     print("TRENDLINE & S/R ANALYSIS REPORT GENERATOR")
     print("=" * 60)
 
-    # Step 1: Read params from GSheet
-    print("\n[1/5] Reading parameters from Google Sheet...")
-    creds_path = project_root / 'creds' / 'service_account_key.json'
-    client = utils_gsheet_handler.authenticate_gsheet(creds_path)
-    df_params = utils_gsheet_handler.extract_data(client, SPREADSHEET_ID, INPUT_TAB_NAME)
-    tickers, reference_date = parse_params(df_params)
-    reference_date = resolve_reference_date(reference_date)
+    # Step 1: Read params (CLI overrides GSheet)
+    if args.tickers:
+        tickers = [t.strip().upper() for t in args.tickers]
+        reference_date = resolve_reference_date(args.date or '')
+        print(f"\n[1/5] Using CLI params (skipping Google Sheet).")
+    else:
+        print("\n[1/5] Reading parameters from Google Sheet...")
+        creds_path = project_root / 'creds' / 'service_account_key.json'
+        client = utils_gsheet_handler.authenticate_gsheet(creds_path)
+        df_params = utils_gsheet_handler.extract_data(client, SPREADSHEET_ID, INPUT_TAB_NAME)
+        tickers, reference_date = parse_params(df_params)
+        if args.date:
+            reference_date = resolve_reference_date(args.date)
+        else:
+            reference_date = resolve_reference_date(reference_date)
     print(f"  Tickers: {', '.join(tickers)}")
     print(f"  Reference date: {reference_date}")
 
@@ -101,11 +118,12 @@ def main():
         for i, ticker in enumerate(tickers, 1):
             print(f"\n--- [{i}/{len(tickers)}] {ticker} ---")
 
-            # Fetch 3-tier data
+            # Fetch 15-min data only
             ohlc_data = fetch_all_tiers(
                 ib, ticker, reference_date,
                 exchange=DEFAULT_EXCHANGE,
                 currency=DEFAULT_CURRENCY,
+                tiers=['short_term'],
             )
 
             # Run analysis
@@ -116,9 +134,26 @@ def main():
                 for err in analysis.errors:
                     print(f"    WARN: {err}")
 
-            # Build charts
-            print(f"  Building charts...", end=' ')
+            # Build main chart (short_term only)
+            print(f"  Building chart...", end=' ')
             charts = build_ticker_charts(ohlc_data, analysis, reference_date)
+            print("Done.")
+
+            # Build progressive explanation charts + explanation document
+            print(f"  Generating explanation...", end=' ')
+            df_short = ohlc_data.get('short_term')
+            if df_short is not None and not df_short.empty and analysis.short_term:
+                prog_charts = build_explanation_charts(
+                    df_short, analysis.short_term, ticker, reference_date
+                )
+                explanation_html = generate_explanation(
+                    df=df_short,
+                    tier_result=analysis.short_term,
+                    ticker=ticker,
+                    reference_date=reference_date,
+                    progressive_charts=prog_charts,
+                )
+                save_explanation(explanation_html, ticker, reference_date)
             print("Done.")
 
             all_results.append(analysis)

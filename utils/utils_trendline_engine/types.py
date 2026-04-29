@@ -18,6 +18,10 @@ class PivotPoint:
     price: float
     pivot_type: str          # 'HIGH' or 'LOW'
     order: int = 1           # 1=first-order, 2=second-order, 3=third-order
+    # v2 volume fields (Section 3.7)
+    volume_at_pivot: float = 0.0       # 3-bar centred avg
+    volume_ratio: float = 0.0          # vs 20-bar SMA
+    volume_change_vs_prior: float = 0.0  # % change vs prior same-side pivot
 
 
 @dataclass
@@ -38,6 +42,7 @@ class Trendline:
     role: str = ''                                  # 'SUPPORT' or 'RESISTANCE'
     steep_flag: bool = False
     construction_method: str = 'REGRESSION'         # 'REGRESSION', 'PARALLEL_CLONE', 'INDEPENDENT_FIT'
+    outlier_pivots: list[PivotPoint] = None        # Pivots excluded from fit as statistical outliers
 
     def price_at(self, bar_index: float) -> float:
         """Return the trendline price at a given bar index."""
@@ -84,6 +89,9 @@ class Channel:
     projected_values: Optional[ProjectedValues] = None
     # For steep trendlines: a secondary shallower channel
     secondary_channel: Optional['Channel'] = None
+    # v2 volume fields
+    volume_divergence: Optional['PivotVolumeDivergence'] = None  # Section 5.9
+    obv_analysis: Optional['OBVAnalysis'] = None                  # Section 5.10
 
 
 @dataclass
@@ -98,6 +106,8 @@ class SRZone:
     role_reversal: bool = False
     age_bars: int = 0
     weakened: bool = False
+    # v2 volume fields (Section 11.2-11.3)
+    avg_volume_ratio_at_touches: float = 1.0
 
 
 @dataclass
@@ -114,6 +124,9 @@ class BreakInfo:
     break_bar_index: Optional[int] = None
     break_timestamp: Optional[datetime] = None
     pullback_expected: bool = True
+    # v2 volume fields (Section 8.2 + 8.2.1)
+    volume_climax_caution: bool = False              # >3x avg volume on breakout (Bulkowski empirical)
+    breakdown_volume_elevated: bool = False          # diagnostic for downside breaks
 
 
 @dataclass
@@ -128,6 +141,9 @@ class RegimeResult:
     r_squared: float = 0.0
     trend_start_bar_index: Optional[int] = None
     trend_start_timestamp: Optional[datetime] = None
+    # v2 volume fields (Section 4.2 Step 5)
+    volume_confirmed: Optional[bool] = None          # None=inconclusive, True=healthy, False=divergent
+    volume_trend_ratio: float = 0.0
 
 
 @dataclass
@@ -144,6 +160,42 @@ class HorizontalRange:
     upper_boundary: float
     lower_boundary: float
     width_pct: float
+    # v2 volume fields (Section 9.1)
+    range_volume_bias: str = 'NEUTRAL'      # BULLISH, BEARISH, NEUTRAL (rally vs decline volume)
+    range_volume_trend: str = 'FLAT'        # DECLINING (coiling), FLAT, EXPANDING (anomaly)
+
+
+@dataclass
+class PivotVolumeDivergence:
+    """Volume divergence detection at successive pivot anchors (Section 5.9)."""
+    divergence_warning: str = 'NONE'              # SIGNIFICANT (>=2 consecutive), MILD (1), NONE
+    divergence_count: int = 0
+    details: list[dict] = field(default_factory=list)  # per-pivot divergence details
+
+
+@dataclass
+class OBVAnalysis:
+    """On-Balance Volume trend analysis (Section 5.10)."""
+    obv_slope: float = 0.0                        # slope of OBV over channel span
+    obv_r_squared: float = 0.0
+    obv_slope_direction: str = 'FLAT'             # POSITIVE, NEGATIVE, FLAT
+    obv_confirmation: str = ''                    # CONFIRMED, DIVERGENT
+    obv_trendline: Optional[Trendline] = None     # trendline fitted to OBV series
+    obv_trendline_broken: bool = False
+    price_trendline_broken: bool = False
+    joint_break: str = 'NONE'                     # CONFIRMED, OBV_LEADING, NONE
+    obv_series: list[float] = field(default_factory=list)  # full OBV series for charting
+
+
+@dataclass
+class VolumeAnalysis:
+    """Aggregated volume analysis output for a tier (matches v2 §14 schema)."""
+    volume_confirmed: Optional[bool] = None
+    volume_trend_ratio: float = 0.0
+    volume_trend_interpretation: str = ''
+    pivot_volume_divergence: Optional[PivotVolumeDivergence] = None
+    obv_analysis: Optional[OBVAnalysis] = None
+    anchor_point_volumes: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -168,6 +220,9 @@ class TierResult:
     # All pivots found (for charting)
     pivot_highs: list[PivotPoint] = field(default_factory=list)
     pivot_lows: list[PivotPoint] = field(default_factory=list)
+
+    # v2 aggregated volume analysis (Section 14)
+    volume_analysis: Optional[VolumeAnalysis] = None
 
 
 @dataclass
