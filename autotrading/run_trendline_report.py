@@ -118,12 +118,12 @@ def main():
         for i, ticker in enumerate(tickers, 1):
             print(f"\n--- [{i}/{len(tickers)}] {ticker} ---")
 
-            # Fetch 15-min data only
+            # Fetch data for all three tiers
             ohlc_data = fetch_all_tiers(
                 ib, ticker, reference_date,
                 exchange=DEFAULT_EXCHANGE,
                 currency=DEFAULT_CURRENCY,
-                tiers=['short_term'],
+                tiers=['short_term', 'medium_term', 'long_term'],
             )
 
             # Run analysis
@@ -134,26 +134,30 @@ def main():
                 for err in analysis.errors:
                     print(f"    WARN: {err}")
 
-            # Build main chart (short_term only)
-            print(f"  Building chart...", end=' ')
+            # Build main charts (all tiers)
+            print(f"  Building charts...", end=' ')
             charts = build_ticker_charts(ohlc_data, analysis, reference_date)
             print("Done.")
 
-            # Build progressive explanation charts + explanation document
-            print(f"  Generating explanation...", end=' ')
-            df_short = ohlc_data.get('short_term')
-            if df_short is not None and not df_short.empty and analysis.short_term:
-                prog_charts = build_explanation_charts(
-                    df_short, analysis.short_term, ticker, reference_date
-                )
-                explanation_html = generate_explanation(
-                    df=df_short,
-                    tier_result=analysis.short_term,
-                    ticker=ticker,
-                    reference_date=reference_date,
-                    progressive_charts=prog_charts,
-                )
-                save_explanation(explanation_html, ticker, reference_date)
+            # Build progressive explanation charts + explanation documents for all tiers
+            print(f"  Generating explanations...", end=' ')
+            for tier_name in ['short_term', 'medium_term', 'long_term']:
+                df_tier = ohlc_data.get(tier_name)
+                tier_result = getattr(analysis, tier_name, None)
+                if df_tier is not None and not df_tier.empty and tier_result:
+                    prog_charts = build_explanation_charts(
+                        df_tier, tier_result, ticker, reference_date
+                    )
+                    explanation_html = generate_explanation(
+                        df=df_tier,
+                        tier_result=tier_result,
+                        ticker=ticker,
+                        reference_date=reference_date,
+                        progressive_charts=prog_charts,
+                        tier=tier_name,
+                    )
+                    save_explanation(explanation_html, ticker, reference_date,
+                                     tier=tier_name)
             print("Done.")
 
             all_results.append(analysis)

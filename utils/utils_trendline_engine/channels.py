@@ -64,7 +64,7 @@ def build_channel(pivot_highs: list[PivotPoint], pivot_lows: list[PivotPoint],
     else:
         # Independently fit the opposite line
         independent_opposite = _fit_independent_opposite(opposite_pivots, trend_direction,
-                                                         ohlc_df, opposite_role)
+                                                         ohlc_df, opposite_role, cfg)
         geometry, resolution_bias = _classify_geometry(
             primary_line, independent_opposite or parallel_line,
             validation, opposite_pivots, cfg
@@ -295,8 +295,11 @@ def _validate_parallel(parallel_line: Trendline | None,
 
 def _fit_independent_opposite(opposite_pivots: list[PivotPoint],
                               trend_direction: str, ohlc_df,
-                              role: str) -> Trendline | None:
+                              role: str, config: dict = None) -> Trendline | None:
     """Independently fit the opposite-side line (Section 5.4 Step 4)."""
+    from .config import CONFIG
+    cfg = config or CONFIG
+
     if len(opposite_pivots) < 2:
         return None
 
@@ -305,14 +308,22 @@ def _fit_independent_opposite(opposite_pivots: list[PivotPoint],
 
     coeffs = np.polyfit(indices, prices, 1)
     slope = coeffs[0]
+    intercept_raw = coeffs[1]
 
-    # Anchor to most extreme pivot
-    if trend_direction == 'UPTREND':
-        adjusted_intercepts = prices - slope * indices
-        intercept = np.max(adjusted_intercepts)
-    else:
-        adjusted_intercepts = prices - slope * indices
-        intercept = np.min(adjusted_intercepts)
+    # Apply same ≥min_correct_side_pct logic as _fit_primary_trendline
+    min_correct = cfg.get('TRENDLINE_MIN_CORRECT_SIDE_PCT', 0.70)
+    N = len(opposite_pivots)
+    max_wrong = int(np.floor((1.0 - min_correct) * N))
+
+    adj = prices - slope * indices
+    sorted_adj = np.sort(adj)
+
+    if role == 'SUPPORT':
+        threshold = sorted_adj[max_wrong]
+        intercept = min(intercept_raw, threshold)
+    else:  # RESISTANCE
+        threshold = sorted_adj[N - 1 - max_wrong]
+        intercept = max(intercept_raw, threshold)
 
     # R²
     y_pred = slope * indices + intercept

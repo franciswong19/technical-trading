@@ -100,8 +100,13 @@ def build_html_report(all_results: list[TickerAnalysis],
 
         <h2>Report Description</h2>
         <p>This report applies a deterministic trendline and support/resistance analysis
-        on the <strong>15-minute timeframe</strong> (20 trading days, 520 bars) for each
-        selected ticker. The methodology follows Grimes's pivot hierarchy,
+        across <strong>three timeframes</strong> for each selected ticker:</p>
+        <ul>
+          <li><strong>Short-term (15-min):</strong> 20 trading days, ~520 bars</li>
+          <li><strong>Medium-term (1-hour):</strong> 60 trading days, ~420 bars</li>
+          <li><strong>Long-term (daily):</strong> 260 trading days, ~260 bars</li>
+        </ul>
+        <p>The methodology follows Grimes's pivot hierarchy,
         Edwards &amp; Magee's trendline construction, and Kirkpatrick &amp; Dahlquist's breakout
         confirmation framework, with Pring's volume divergence and Bulkowski's climax rules.</p>
         <p>
@@ -110,8 +115,8 @@ def build_html_report(all_results: list[TickerAnalysis],
             <span style="color:#FFA500;">Resistance (orange)</span>
         </p>
         <p>Dotted trendlines indicate a breakout has occurred from that point onwards.
-        A separate per-ticker <em>explanation file</em> is saved alongside this report,
-        walking through the step-by-step reasoning behind every trendline and signal.</p>
+        A separate per-ticker explanation file (one per timeframe) is saved alongside this
+        report, walking through the step-by-step reasoning behind every trendline and signal.</p>
         <p>Data source: IB Gateway (regular trading hours)</p>
 
         <h2>Analysis</h2>
@@ -136,8 +141,12 @@ def _build_ticker_section(analysis: TickerAnalysis,
     html = f'<div class="ticker-header">{analysis.ticker} '
     html += f'<span class="{status_class}">[{analysis.status}]</span></div>\n'
 
-    # Per-tier charts and summaries (15-min only)
-    for tier_name, tier_label in [('short_term', 'Short-Term (15-min)')]:
+    # Per-tier charts and summaries (all three tiers)
+    for tier_name, tier_label in [
+        ('short_term', 'Short-Term (15-min)'),
+        ('medium_term', 'Medium-Term (1-hour)'),
+        ('long_term', 'Long-Term (Daily)'),
+    ]:
         tier_result = getattr(analysis, tier_name, None)
         chart_html = charts.get(tier_name, '<p>No chart available.</p>')
 
