@@ -30,6 +30,13 @@ W_RECENCY = CONFIG['W_RECENCY']
 W_VOLUME = CONFIG['W_VOLUME']
 W_REVERSAL = CONFIG['W_REVERSAL']
 
+# Display metadata per tier
+_TIER_META = {
+    'short_term':  {'label': '15-Min',  'interval_str': '15-min'},
+    'medium_term': {'label': '1-Hour',  'interval_str': '1-hour'},
+    'long_term':   {'label': 'Daily',   'interval_str': 'daily'},
+}
+
 
 # ============================================================================
 # Public API
@@ -39,21 +46,23 @@ def generate_explanation(df: pd.DataFrame,
                          tier_result: TierResult,
                          ticker: str,
                          reference_date: str,
-                         progressive_charts: list[tuple[str, str]]) -> str:
+                         progressive_charts: list[tuple[str, str]],
+                         tier: str = 'short_term') -> str:
     """Generate a self-contained HTML explanation document.
 
     Args:
-        df: OHLCV DataFrame for the 15-min tier.
-        tier_result: Completed TierResult for the short_term tier.
+        df: OHLCV DataFrame for the given tier.
+        tier_result: Completed TierResult for the tier.
         ticker: Ticker symbol.
         reference_date: Analysis reference date string.
         progressive_charts: List of (title, html_fragment) from build_explanation_charts().
+        tier: Tier name ('short_term', 'medium_term', 'long_term').
 
     Returns:
         Complete HTML string (self-contained, no external dependencies except Plotly CDN).
     """
     if tier_result is None:
-        return _error_html(ticker, reference_date, "No short-term analysis data available.")
+        return _error_html(ticker, reference_date, f"No {tier} analysis data available.")
 
     # Pull progressive chart HTML by stage index
     def chart_at(i):
@@ -63,28 +72,35 @@ def generate_explanation(df: pd.DataFrame,
 
     sections = []
     sections.append(_section_data_overview(df, tier_result, ticker, reference_date,
-                                           chart_html=chart_at(0)))
-    sections.append(_section_pivot_detection(df, tier_result, chart_html=chart_at(1)))
-    sections.append(_section_regime_classification(df, tier_result))
+                                           chart_html=chart_at(0), tier=tier))
+    sections.append(_section_pivot_detection(df, tier_result, chart_html=chart_at(1),
+                                             tier=tier))
+    sections.append(_section_regime_classification(df, tier_result, tier=tier))
     sections.append(_section_channel_construction(df, tier_result,
                                                   chart_primary=chart_at(2),
-                                                  chart_full=chart_at(3)))
-    sections.append(_section_sr_zones(df, tier_result, chart_html=chart_at(4)))
+                                                  chart_full=chart_at(3), tier=tier))
+    sections.append(_section_sr_zones(df, tier_result, chart_html=chart_at(4), tier=tier))
     sections.append(_section_volume_analysis(df, tier_result))
 
     if tier_result.break_info is not None:
-        sections.append(_section_breakout(df, tier_result, chart_html=chart_at(5)))
+        sections.append(_section_breakout(df, tier_result, chart_html=chart_at(5),
+                                          tier=tier))
 
     if tier_result.fan_lines:
         sections.append(_section_fan_lines(tier_result))
 
-    sections.append(_section_final_verdict(df, tier_result, chart_html=chart_at(5)))
+    sections.append(_section_final_verdict(df, tier_result, chart_html=chart_at(5),
+                                           tier=tier))
 
-    return _wrap_html(ticker, reference_date, '\n'.join(sections))
+    return _wrap_html(ticker, reference_date, '\n'.join(sections), tier=tier)
 
 
-def save_explanation(html_content: str, ticker: str, reference_date: str) -> Path:
+def save_explanation(html_content: str, ticker: str, reference_date: str,
+                     tier: str = 'short_term') -> Path:
     """Save the explanation HTML to the autotrading/reports/ folder.
+
+    Filename: explanation_{TICKER}_{interval}_{YYYYMMDD}.html
+    e.g. explanation_QQQ_15min_20260429.html
 
     Returns:
         Path to the saved file.
@@ -94,7 +110,8 @@ def save_explanation(html_content: str, ticker: str, reference_date: str) -> Pat
 
     date_str = reference_date.replace('-', '') if reference_date else \
         datetime.now().strftime('%Y%m%d')
-    file_path = output_folder / f'explanation_{ticker}_{date_str}.html'
+    interval = CONFIG['TIERS'][tier]['interval']
+    file_path = output_folder / f'explanation_{ticker}_{interval}_{date_str}.html'
 
     with open(str(file_path), 'w', encoding='utf-8') as f:
         f.write(html_content)
@@ -108,12 +125,19 @@ def save_explanation(html_content: str, ticker: str, reference_date: str) -> Pat
 # ============================================================================
 
 def _section_data_overview(df, tier_result, ticker, reference_date,
-                            chart_html='') -> str:
+                            chart_html='', tier='short_term') -> str:
+    tier_def = CONFIG['TIERS'][tier]
+    lookback = tier_def['lookback_trading_days']
+    bars_per_day = tier_def['bars_per_day']
+    approx_bars = lookback * bars_per_day
+    interval_str = _TIER_META[tier]['interval_str']
+
     n_bars = len(df)
     if not df.empty:
         t_col = pd.to_datetime(df['t'])
-        start_dt = t_col.iloc[0].strftime('%Y-%m-%d %H:%M')
-        end_dt = t_col.iloc[-1].strftime('%Y-%m-%d %H:%M')
+        fmt = '%Y-%m-%d %H:%M' if interval_str != 'daily' else '%Y-%m-%d'
+        start_dt = t_col.iloc[0].strftime(fmt)
+        end_dt = t_col.iloc[-1].strftime(fmt)
         price_high = df['high'].max()
         price_low = df['low'].min()
         price_range_pct = (price_high - price_low) / price_low * 100
@@ -133,14 +157,15 @@ def _section_data_overview(df, tier_result, ticker, reference_date,
 
     html = _section_start('sec-1', '1. Data Overview')
     html += f'''
-<p>This chart covers the last <strong>20 trading days</strong> of 15-minute bars
-(approximately 520 bars). The analysis anchors all percentage thresholds to
+<p>This chart covers the last <strong>{lookback} trading days</strong> of {interval_str} bars
+(approximately {approx_bars:,} bars). The analysis anchors all percentage thresholds to
 <strong>ATR(14)</strong> so they scale automatically with recent volatility.</p>
 
 <ul>
   <li><strong>Ticker:</strong> {ticker}</li>
+  <li><strong>Timeframe:</strong> {interval_str} bars</li>
   <li><strong>Reference date:</strong> {reference_date}</li>
-  <li><strong>Bar count:</strong> {n_bars:,} bars (15-min intervals)</li>
+  <li><strong>Bar count:</strong> {n_bars:,} bars ({interval_str} intervals)</li>
   <li><strong>Date range:</strong> {start_dt} → {end_dt}</li>
   <li><strong>Price range:</strong> ${price_low:.2f} – ${price_high:.2f}
       ({price_range_pct:.1f}% span)</li>
@@ -157,12 +182,13 @@ def _section_data_overview(df, tier_result, ticker, reference_date,
     return html
 
 
-def _section_pivot_detection(df, tier_result, chart_html='') -> str:
-    pivot_window = CONFIG['PIVOT_WINDOW']['short_term']
-    atr_mult = CONFIG['ATR_SWING_MULTIPLIER']['short_term']
-    min_sep = CONFIG['MIN_PIVOT_SEPARATION']['short_term']
-    swing_atr = CONFIG['SWING_ATR_MULTIPLE']['short_term']
-    min_span = CONFIG['MIN_CHANNEL_SPAN']['short_term']
+def _section_pivot_detection(df, tier_result, chart_html='', tier='short_term') -> str:
+    pivot_window = CONFIG['PIVOT_WINDOW'][tier]
+    atr_mult = CONFIG['ATR_SWING_MULTIPLIER'][tier]
+    min_sep = CONFIG['MIN_PIVOT_SEPARATION'][tier]
+    swing_atr = CONFIG['SWING_ATR_MULTIPLE'][tier]
+    min_span = CONFIG['MIN_CHANNEL_SPAN'][tier]
+    interval_str = _TIER_META[tier]['interval_str']
 
     highs = sorted(tier_result.pivot_highs, key=lambda p: p.bar_index)
     lows = sorted(tier_result.pivot_lows, key=lambda p: p.bar_index)
@@ -192,7 +218,7 @@ def _section_pivot_detection(df, tier_result, chart_html='') -> str:
 support/resistance zones. The detection follows <strong>Grimes's three-order hierarchy</strong>
 — only first-order pivots (the most significant local extremes) are used here.</p>
 
-<h3>Detection Rules (15-min tier parameters)</h3>
+<h3>Detection Rules ({interval_str} tier parameters)</h3>
 <ul>
   <li><strong>Window:</strong> ±{pivot_window} bars — a high is a pivot only if it is
       strictly greater than all bars within {pivot_window} bars on each side
@@ -243,7 +269,7 @@ on top of the raw bars.</em></p>
     return html
 
 
-def _section_regime_classification(df, tier_result) -> str:
+def _section_regime_classification(df, tier_result, tier='short_term') -> str:
     regime = tier_result.regime
     if regime is None:
         return _section_start('sec-3', '3. Step 2: Regime Classification') + \
@@ -251,8 +277,8 @@ def _section_regime_classification(df, tier_result) -> str:
 
     min_r2 = CONFIG['MIN_R_SQUARED']
     choppy_ceil = CONFIG['CHOPPY_R_SQUARED_CEILING']
-    min_slope_val = CONFIG['MIN_SLOPE']['short_term']
-    max_slope_val = CONFIG['MAX_SLOPE']['short_term']
+    min_slope_val = CONFIG['MIN_SLOPE'][tier]
+    max_slope_val = CONFIG['MAX_SLOPE'][tier]
     vol_thresh = CONFIG['VOLUME_TREND_RATIO_THRESHOLD']
     vol_penalty = CONFIG['VOLUME_CONFIDENCE_PENALTY']
 
@@ -379,7 +405,8 @@ classification).</p>
 
 
 def _section_channel_construction(df, tier_result,
-                                   chart_primary='', chart_full='') -> str:
+                                   chart_primary='', chart_full='',
+                                   tier='short_term') -> str:
     ch = tier_result.trend_channel
     if ch is None:
         return (
@@ -406,8 +433,8 @@ def _section_channel_construction(df, tier_result,
 
     # Width
     width_pct = ch.width_pct
-    min_w = CONFIG['MIN_WIDTH_PCT']['short_term']
-    max_w = CONFIG['MAX_WIDTH_PCT']['short_term']
+    min_w = CONFIG['MIN_WIDTH_PCT'][tier]
+    max_w = CONFIG['MAX_WIDTH_PCT'][tier]
     min_atr = CONFIG['MIN_WIDTH_ATR_MULTIPLE']
     max_atr = CONFIG['MAX_WIDTH_ATR_MULTIPLE']
     width_atr = ch.width_atr
@@ -502,13 +529,13 @@ This lets you see which pivots anchor the primary fit and how closely they align
     return html
 
 
-def _section_sr_zones(df, tier_result, chart_html='') -> str:
+def _section_sr_zones(df, tier_result, chart_html='', tier='short_term') -> str:
     zones = tier_result.support_resistance_zones
     min_score = CONFIG['MIN_ZONE_SCORE']
     min_touches = CONFIG['MIN_ZONE_TOUCHES']
-    tol_pct = CONFIG['ZONE_TOLERANCE_PCT']['short_term']
+    tol_pct = CONFIG['ZONE_TOLERANCE_PCT'][tier]
     tol_atr = CONFIG['ZONE_TOLERANCE_ATR_MULTIPLE']
-    decay_window = CONFIG['ZONE_DECAY_WINDOW']['short_term']
+    decay_window = CONFIG['ZONE_DECAY_WINDOW'][tier]
 
     zone_detail = ''
     if zones:
@@ -721,14 +748,14 @@ bars moving against it. A healthy trend should attract more volume on its domina
     return html
 
 
-def _section_breakout(df, tier_result, chart_html='') -> str:
+def _section_breakout(df, tier_result, chart_html='', tier='short_term') -> str:
     bi = tier_result.break_info
     if bi is None:
         return ''
 
     atr_mult = CONFIG['ATR_BREAKOUT_MULTIPLIER']
     vol_mult = CONFIG['VOLUME_BREAKOUT_MULTIPLIER']
-    confirm_bars = CONFIG['BREAKOUT_CONFIRM_BARS']['short_term']
+    confirm_bars = CONFIG['BREAKOUT_CONFIRM_BARS'][tier]
 
     close_badge = _badge(bi.close_filter, 'PASS' if bi.close_filter else 'FAIL')
     atr_badge = _badge(bi.atr_filter, 'PASS' if bi.atr_filter else 'FAIL')
@@ -867,7 +894,7 @@ at a decreasing angle.</p>
     return html
 
 
-def _section_final_verdict(df, tier_result, chart_html='') -> str:
+def _section_final_verdict(df, tier_result, chart_html='', tier='short_term') -> str:
     regime = tier_result.regime
     ch = tier_result.trend_channel
     bi = tier_result.break_info
@@ -894,7 +921,8 @@ def _section_final_verdict(df, tier_result, chart_html='') -> str:
         elif regime.sub_type:
             dir_str = f', sub-type: {regime.sub_type}'
 
-    summary = f'The 15-min chart for this period is classified as <strong>{regime_str}{dir_str}</strong>'
+    interval_str = _TIER_META[tier]['interval_str']
+    summary = f'The {interval_str} chart for this period is classified as <strong>{regime_str}{dir_str}</strong>'
     if regime:
         summary += f' with confidence {regime.confidence:.2f}'
     summary += '.'
@@ -1166,7 +1194,8 @@ def _geometry_explanation(geom: str) -> str:
     return explanations.get(geom, f'Geometry type "{geom}" detected.')
 
 
-def _wrap_html(ticker: str, reference_date: str, body: str) -> str:
+def _wrap_html(ticker: str, reference_date: str, body: str,
+               tier: str = 'short_term') -> str:
     """Wrap all sections in a full HTML page."""
     nav_links = [
         ('#sec-1', '1. Data Overview'),
@@ -1183,6 +1212,8 @@ def _wrap_html(ticker: str, reference_date: str, body: str) -> str:
         f'<a href="{href}">{label}</a>' for href, label in nav_links
     )
 
+    tier_label = _TIER_META[tier]['label']
+    interval_str = _TIER_META[tier]['interval_str']
     gen_time = datetime.now().strftime('%Y-%m-%d %H:%M')
 
     return f'''<!DOCTYPE html>
@@ -1190,7 +1221,7 @@ def _wrap_html(ticker: str, reference_date: str, body: str) -> str:
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>{ticker} 15-Min Chart Explanation — {reference_date}</title>
+  <title>{ticker} {tier_label} Chart Explanation — {reference_date}</title>
   <style>
     body {{
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
@@ -1283,17 +1314,18 @@ def _wrap_html(ticker: str, reference_date: str, body: str) -> str:
 </head>
 <body>
 
-<h1>📈 {ticker} — 15-Min Chart Explanation</h1>
+<h1>📈 {ticker} — {tier_label} Chart Explanation</h1>
 <p><strong>Reference date:</strong> {reference_date} &nbsp;|&nbsp;
+   <strong>Timeframe:</strong> {interval_str} bars &nbsp;|&nbsp;
    <strong>Generated:</strong> {gen_time}</p>
 
 <nav>
   <strong>Jump to:</strong> {nav_html}
 </nav>
 
-<p>This document walks through the complete reasoning behind the trendline chart for
-<strong>{ticker}</strong>. Each section explains one step of the analysis, shows which
-data triggered each decision, and includes progressive charts so you can see exactly
+<p>This document walks through the complete reasoning behind the {interval_str} trendline
+chart for <strong>{ticker}</strong>. Each section explains one step of the analysis, shows
+which data triggered each decision, and includes progressive charts so you can see exactly
 how each overlay is built on top of the raw price data.</p>
 
 {body}

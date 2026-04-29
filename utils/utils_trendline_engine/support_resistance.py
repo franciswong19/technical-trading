@@ -64,6 +64,14 @@ def build_sr_zones(pivot_highs: list[PivotPoint], pivot_lows: list[PivotPoint],
     # Filter by minimum requirements
     all_zones = _filter_zones(all_zones, cfg)
 
+    # Reclassify zones by position relative to current price
+    current_price = ohlc_df['close'].iloc[-1]
+    for zone in all_zones:
+        if zone.midpoint < current_price:
+            zone.zone_type = 'SUPPORT'
+        else:
+            zone.zone_type = 'RESISTANCE'
+
     # Sort by score descending
     all_zones.sort(key=lambda z: z.zone_score, reverse=True)
 

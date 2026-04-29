@@ -26,7 +26,8 @@
       "PowerShell(Get-NetTCPConnection -State Listen | Where-Object { $_.LocalPort -in 4001,4002,4003,4004,7496,7497 } | Select-Object LocalAddress, LocalPort, OwningProcess | Format-Table -AutoSize)",
       "PowerShell(Get-NetTCPConnection -State Listen -OwningProcess 22344 -ErrorAction SilentlyContinue)",
       "PowerShell(Get-NetTCPConnection -State Listen -OwningProcess 36760 -ErrorAction SilentlyContinue)",
-      "Bash(git add *)"
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)"
     ]
   }
 }
