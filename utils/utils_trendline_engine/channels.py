@@ -42,7 +42,7 @@ def build_channel(pivot_highs: list[PivotPoint], pivot_lows: list[PivotPoint],
 
     # Pass 1: Primary trendline
     primary_line = _fit_primary_trendline(primary_pivots, trend_direction,
-                                          ohlc_df, primary_role)
+                                          ohlc_df, primary_role, atr_value, cfg)
     if primary_line is None:
         return None, None
 
@@ -94,51 +94,85 @@ def build_channel(pivot_highs: list[PivotPoint], pivot_lows: list[PivotPoint],
         atr_value, primary_role, opposite_role, tier, cfg
     )
 
+    # v2 volume analysis on the constructed channel:
+    # - §5.9 volume divergence at successive anchor pivots
+    # - §5.10 OBV trend tracking + joint trendline break detection
+    if 'volume' in ohlc_df.columns and channel is not None:
+        from .volume import detect_volume_divergence, compute_obv, analyze_obv
+
+        channel.volume_divergence = detect_volume_divergence(
+            channel, primary_pivots, opposite_pivots, trend_direction
+        )
+
+        if cfg.get('OBV_ENABLED', True):
+            closes = ohlc_df['close'].values
+            volumes = ohlc_df['volume'].values
+            obv_series = compute_obv(closes, volumes)
+
+            # Has the price primary line been broken?
+            price_broken = False
+            if channel.primary_line.anchor_points:
+                last_idx = len(closes) - 1
+                expected = channel.primary_line.price_at(last_idx)
+                if trend_direction == 'UPTREND':
+                    price_broken = closes[last_idx] < expected
+                else:
+                    price_broken = closes[last_idx] > expected
+
+            channel.obv_analysis = analyze_obv(
+                obv_series, channel, primary_pivots, trend_direction,
+                price_trendline_broken=price_broken, config=cfg
+            )
+
     return channel, trailing_result
 
 
 def _fit_primary_trendline(pivots: list[PivotPoint], trend_direction: str,
-                           ohlc_df, role: str) -> Trendline | None:
+                           ohlc_df, role: str,
+                           atr_value: float = 0.0,
+                           config: dict = None) -> Trendline | None:
     """Fit the primary trendline (Section 5.1).
 
-    Uses regression for slope discovery, then anchors to actual pivot points.
+    Uses regression for slope discovery, removes outlier pivots (>2×ATR residual),
+    then finds the intercept that maximises R² while keeping ≥80% of non-outlier
+    pivots on the correct side of the line (above for support, below for resistance).
     """
+    from .config import CONFIG
+    cfg = config or CONFIG
+
     if len(pivots) < 2:
         return None
 
     indices = np.array([p.bar_index for p in pivots], dtype=float)
     prices = np.array([p.price for p in pivots], dtype=float)
 
-    # Linear regression for slope discovery
+    # Linear regression on all pivots
     coeffs = np.polyfit(indices, prices, 1)
     slope = coeffs[0]
+    intercept_raw = coeffs[1]  # OLS intercept — maximises R²
 
-    # Anchor adjustment: shift line to touch the most extreme pivot
-    if trend_direction == 'UPTREND':
-        # Demand line: shift down to pass through lowest valid pivot
-        adjusted_intercepts = prices - slope * indices
-        intercept = np.min(adjusted_intercepts)
+    # Find intercept satisfying ≥MIN_CORRECT_SIDE_PCT on the correct side,
+    # as close to intercept_raw as possible (maximises R²).
+    min_correct = cfg.get('TRENDLINE_MIN_CORRECT_SIDE_PCT', 0.80)
+    N = len(pivots)
+    max_wrong = int(np.floor((1.0 - min_correct) * N))
+
+    # adjusted_intercept_i = the intercept value that places the line exactly on pivot i
+    adj = prices - slope * indices
+    sorted_adj = np.sort(adj)  # ascending
+
+    if role == 'SUPPORT':
+        # Pivot is on/above line IFF adj_i >= intercept.
+        # Allow at most max_wrong below → max valid intercept = sorted_adj[max_wrong].
+        threshold = sorted_adj[max_wrong]
+        intercept = min(intercept_raw, threshold)
     else:
-        # Supply line: shift up to pass through highest valid pivot
-        adjusted_intercepts = prices - slope * indices
-        intercept = np.max(adjusted_intercepts)
+        # Pivot is on/below line IFF adj_i <= intercept.
+        # Allow at most max_wrong above → min valid intercept = sorted_adj[N-1-max_wrong].
+        threshold = sorted_adj[N - 1 - max_wrong]
+        intercept = max(intercept_raw, threshold)
 
-    # Verify no bars cut through the line between outermost anchors
-    if len(ohlc_df) > 0:
-        first_idx = int(indices[0])
-        last_idx = int(indices[-1])
-        highs = ohlc_df['high'].values
-        lows = ohlc_df['low'].values
-
-        for i in range(first_idx, min(last_idx + 1, len(ohlc_df))):
-            line_price = slope * i + intercept
-            if trend_direction == 'UPTREND' and lows[i] < line_price:
-                # Bar cuts through — re-anchor
-                intercept = min(intercept, lows[i] - slope * i)
-            elif trend_direction == 'DOWNTREND' and highs[i] > line_price:
-                intercept = max(intercept, highs[i] - slope * i)
-
-    # R² calculation
+    # R² on all pivots
     y_pred = slope * indices + intercept
     ss_res = np.sum((prices - y_pred) ** 2)
     ss_tot = np.sum((prices - np.mean(prices)) ** 2)
@@ -502,14 +536,14 @@ def _build_trailing_fit(primary_pivots, opposite_pivots, trend_direction,
 
     # Fit trailing primary line
     trailing_primary_line = _fit_primary_trendline(
-        trailing_primary, trend_direction, ohlc_df, primary_role
+        trailing_primary, trend_direction, ohlc_df, primary_role, atr_value, config
     )
     if trailing_primary_line is None:
         return TrailingFitResult(recent_divergence=False)
 
     # Full-fit primary line
     full_primary_line = _fit_primary_trendline(
-        primary_pivots, trend_direction, ohlc_df, primary_role
+        primary_pivots, trend_direction, ohlc_df, primary_role, atr_value, config
     )
     if full_primary_line is None:
         return TrailingFitResult(recent_divergence=False)

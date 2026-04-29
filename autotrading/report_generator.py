@@ -100,22 +100,18 @@ def build_html_report(all_results: list[TickerAnalysis],
 
         <h2>Report Description</h2>
         <p>This report applies a deterministic trendline and support/resistance analysis
-        across three timeframes (short-term 15-min, medium-term 1-hour, long-term daily)
-        for each selected ticker. The methodology follows Grimes's pivot hierarchy,
-        Edwards & Magee's trendline construction, and Kirkpatrick & Dahlquist's breakout
-        confirmation framework.</p>
-        <p>
-            <strong>Trendline colors:</strong>
-            <span style="color:#d62728;">Short-term (red)</span> |
-            <span style="color:#1f77b4;">Medium-term (blue)</span> |
-            <span style="color:#2ca02c;">Long-term (green)</span>
-        </p>
+        on the <strong>15-minute timeframe</strong> (20 trading days, 520 bars) for each
+        selected ticker. The methodology follows Grimes's pivot hierarchy,
+        Edwards &amp; Magee's trendline construction, and Kirkpatrick &amp; Dahlquist's breakout
+        confirmation framework, with Pring's volume divergence and Bulkowski's climax rules.</p>
         <p>
             <strong>S/R zones:</strong>
             <span style="color:#808080;">Support (gray)</span> |
             <span style="color:#FFA500;">Resistance (orange)</span>
         </p>
-        <p>Dotted trendlines indicate a breakout has occurred from that point onwards.</p>
+        <p>Dotted trendlines indicate a breakout has occurred from that point onwards.
+        A separate per-ticker <em>explanation file</em> is saved alongside this report,
+        walking through the step-by-step reasoning behind every trendline and signal.</p>
         <p>Data source: IB Gateway (regular trading hours)</p>
 
         <h2>Analysis</h2>
@@ -140,22 +136,8 @@ def _build_ticker_section(analysis: TickerAnalysis,
     html = f'<div class="ticker-header">{analysis.ticker} '
     html += f'<span class="{status_class}">[{analysis.status}]</span></div>\n'
 
-    # Multi-tier interaction summary
-    if analysis.multi_tier_interaction:
-        mti = analysis.multi_tier_interaction
-        html += f"""
-        <div class="multi-tier-box">
-            <strong>Multi-Tier:</strong> {mti.confluence} |
-            Conviction: {mti.conviction} |
-            Bias: {mti.dominant_bias}<br>
-            {mti.description}
-        </div>
-        """
-
-    # Per-tier charts and summaries
-    for tier_name, tier_label in [('short_term', 'Short-Term (15-min)'),
-                                   ('medium_term', 'Medium-Term (1-hour)'),
-                                   ('long_term', 'Long-Term (Daily)')]:
+    # Per-tier charts and summaries (15-min only)
+    for tier_name, tier_label in [('short_term', 'Short-Term (15-min)')]:
         tier_result = getattr(analysis, tier_name, None)
         chart_html = charts.get(tier_name, '<p>No chart available.</p>')
 
@@ -213,6 +195,50 @@ def _build_summary_table(tier_result) -> str:
     sr_count = len(tier_result.support_resistance_zones)
     if sr_count > 0:
         rows.append(('S/R Zones', str(sr_count)))
+
+    # v2 volume analysis rows
+    va = tier_result.volume_analysis
+    if va is not None:
+        if va.volume_confirmed is True:
+            rows.append(('Volume Trend',
+                         f'CONFIRMED ({va.volume_trend_ratio:.2f}x)'))
+        elif va.volume_confirmed is False:
+            rows.append(('Volume Trend',
+                         f'<span style="color:#dc3545">DIVERGENT '
+                         f'({va.volume_trend_ratio:.2f}x)</span>'))
+
+        pvd = va.pivot_volume_divergence
+        if pvd and pvd.divergence_warning != 'NONE':
+            color = '#dc3545' if pvd.divergence_warning == 'SIGNIFICANT' else '#ffc107'
+            rows.append(('Volume Divergence',
+                         f'<span style="color:{color}">{pvd.divergence_warning} '
+                         f'({pvd.divergence_count} consecutive)</span>'))
+
+        obv = va.obv_analysis
+        if obv:
+            obv_text = obv.obv_confirmation or '—'
+            if obv.joint_break == 'CONFIRMED':
+                rows.append(('OBV',
+                             f'<span style="color:#dc3545">JOINT BREAK CONFIRMED</span>'))
+            elif obv.joint_break == 'OBV_LEADING':
+                rows.append(('OBV',
+                             f'<span style="color:#ffc107">OBV LEADING (early warning)</span>'))
+            elif obv_text:
+                color = '#28a745' if obv_text == 'CONFIRMED' else '#dc3545'
+                rows.append(('OBV',
+                             f'<span style="color:{color}">{obv_text} '
+                             f'({obv.obv_slope_direction})</span>'))
+
+    if tier_result.horizontal_range is not None:
+        hr = tier_result.horizontal_range
+        if hr.range_volume_bias != 'NEUTRAL' or hr.range_volume_trend != 'FLAT':
+            rows.append(('Range Volume',
+                         f'{hr.range_volume_bias} bias, {hr.range_volume_trend}'))
+
+    if (tier_result.break_info is not None
+            and tier_result.break_info.volume_climax_caution):
+        rows.append(('Volume Climax',
+                     '<span style="color:#ffc107">CAUTION (>3x avg vol)</span>'))
 
     row_html = ''.join(f'<tr><th>{k}</th><td>{v}</td></tr>' for k, v in rows)
     return f'<table class="summary-table">{row_html}</table>\n'

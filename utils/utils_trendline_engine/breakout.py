@@ -136,15 +136,31 @@ def _confirm_break(closes, highs, lows, volumes, break_level, break_direction,
     else:
         atr_filter = closes[break_bar] < break_level - atr_mult * atr_value
 
-    # Filter 3: Volume filter — volume >= VOLUME_BREAKOUT_MULTIPLIER × avg_volume(20)
-    volume_filter = False
+    # Filter 3: Volume filter — DIRECTIONAL (v2 §8.2)
+    # Edwards & Magee Ch. 17: "It takes buying to put prices up, but prices can fall
+    # of their own weight." Volume confirmation is required for upside breakouts but
+    # not for downside breakdowns.
     vol_start = max(0, break_bar - 20)
     avg_vol = np.mean(volumes[vol_start:break_bar]) if break_bar > vol_start else 0
-    if avg_vol > 0:
-        volume_filter = volumes[break_bar] >= vol_mult * avg_vol
+    breakout_volume = float(volumes[break_bar])
+
+    if break_direction == 'BREAKOUT':
+        # Volume filter is required for upside breaks
+        volume_filter = avg_vol > 0 and breakout_volume >= vol_mult * avg_vol
+        breakdown_volume_elevated = False
+    else:  # BREAKDOWN
+        # Volume not required — auto-pass; record diagnostic
+        volume_filter = True
+        breakdown_volume_elevated = (avg_vol > 0
+                                     and breakout_volume >= vol_mult * avg_vol)
 
     filters_passed = sum([close_filter, atr_filter, volume_filter])
     confirmed = filters_passed >= 2
+
+    # Volume climax caution (v2 §8.2.1) — Bulkowski empirical: heavy breakout volume
+    # (>3x avg) actually triples failure rates. Flag without gating confirmation.
+    from .volume import check_volume_climax
+    volume_climax_caution = check_volume_climax(breakout_volume, float(avg_vol), config)
 
     # Time confirmation: check if price stayed beyond level for confirm_bars
     if confirmed and break_bar + confirm_bars < n:
@@ -167,4 +183,6 @@ def _confirm_break(closes, highs, lows, volumes, break_level, break_direction,
         atr_filter=atr_filter,
         volume_filter=volume_filter,
         break_bar_index=break_bar,
+        volume_climax_caution=volume_climax_caution,
+        breakdown_volume_elevated=breakdown_volume_elevated,
     )

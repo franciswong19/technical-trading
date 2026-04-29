@@ -89,6 +89,9 @@ def _cluster_pivots_into_zones(pivots: list[PivotPoint], zone_type: str,
     zones = []
     current_cluster = [sorted_pivots[0]]
 
+    # Track the cluster pivots for each zone so we can compute avg_volume_ratio
+    cluster_map: dict[int, list[PivotPoint]] = {}
+
     for pivot in sorted_pivots[1:]:
         cluster_mid = np.mean([p.price for p in current_cluster])
         # Use the larger of percentage and ATR tolerance
@@ -97,11 +100,19 @@ def _cluster_pivots_into_zones(pivots: list[PivotPoint], zone_type: str,
         if abs(pivot.price - cluster_mid) <= tol:
             current_cluster.append(pivot)
         else:
-            zones.append(_cluster_to_zone(current_cluster, zone_type, atr_value))
+            zone = _cluster_to_zone(current_cluster, zone_type, atr_value)
+            cluster_map[id(zone)] = list(current_cluster)
+            zones.append(zone)
             current_cluster = [pivot]
 
     # Don't forget the last cluster
-    zones.append(_cluster_to_zone(current_cluster, zone_type, atr_value))
+    zone = _cluster_to_zone(current_cluster, zone_type, atr_value)
+    cluster_map[id(zone)] = list(current_cluster)
+    zones.append(zone)
+
+    # Attach cluster pivot list to each zone (for downstream volume scoring)
+    for zone in zones:
+        zone._cluster_pivots = cluster_map.get(id(zone), [])  # type: ignore[attr-defined]
 
     return zones
 
@@ -123,6 +134,10 @@ def _cluster_to_zone(cluster: list[PivotPoint], zone_type: str,
     min_bar_index = min(p.bar_index for p in cluster)
     age_bars = max_bar_index - min_bar_index
 
+    # Average volume_ratio across cluster pivots (v2 §11.2-11.3)
+    from .volume import avg_volume_ratio_for_pivots
+    avg_vol_ratio = avg_volume_ratio_for_pivots(cluster)
+
     return SRZone(
         zone_type=zone_type,
         midpoint=midpoint,
@@ -132,6 +147,7 @@ def _cluster_to_zone(cluster: list[PivotPoint], zone_type: str,
         zone_score=0.0,
         role_reversal=False,
         age_bars=age_bars,
+        avg_volume_ratio_at_touches=avg_vol_ratio,
     )
 
 
@@ -171,8 +187,10 @@ def _score_zone(zone: SRZone, total_bars: int, volumes: np.ndarray | None,
     recency_ratio = 1.0 - (zone.age_bars / max(total_bars, 1))
     recency_score = max(0.0, recency_ratio) * w_recency * zone.touch_count
 
-    # Volume: normalized (using average as 1.0 baseline)
-    volume_score = 1.0 * w_volume  # Default if no volume data
+    # Volume score (v2 §11.3) — uses avg_volume_ratio_at_touches.
+    # Per Edwards & Magee Ch. 13: heavy-volume tops/bottoms create powerful S/R;
+    # light-volume tops/bottoms create weak S/R.
+    volume_score = zone.avg_volume_ratio_at_touches * w_volume
 
     # Role reversal bonus
     reversal_bonus = w_reversal if zone.role_reversal else 0.0

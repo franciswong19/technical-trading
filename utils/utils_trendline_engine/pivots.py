@@ -432,6 +432,11 @@ def identify_pivots(ohlc_df: pd.DataFrame, tier: str,
     # Step 5: Spacing constraints
     spaced = enforce_spacing_constraints(alternated, highs, lows, atr_value, tier, cfg)
 
+    # Step 6 (v2): Record volume context on each confirmed pivot (Section 3.7)
+    if 'volume' in ohlc_df.columns:
+        from .volume import record_pivot_volumes
+        spaced = record_pivot_volumes(spaced, ohlc_df['volume'].values, cfg)
+
     # Separate into highs and lows
     pivot_highs = [p for p in spaced if p.pivot_type == 'HIGH']
     pivot_lows = [p for p in spaced if p.pivot_type == 'LOW']

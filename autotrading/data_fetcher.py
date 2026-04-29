@@ -40,8 +40,9 @@ def resolve_reference_date(reference_date: str = '') -> str:
 
 def fetch_all_tiers(ib, ticker: str, reference_date: str = '',
                     exchange: str = 'SMART', currency: str = 'USD',
-                    config: dict = None) -> dict[str, pd.DataFrame]:
-    """Fetch OHLCV data for all three analysis tiers from IB Gateway.
+                    config: dict = None,
+                    tiers: list = None) -> dict[str, pd.DataFrame]:
+    """Fetch OHLCV data for the requested analysis tiers from IB Gateway.
 
     Args:
         ib: Connected IB instance.
@@ -50,16 +51,20 @@ def fetch_all_tiers(ib, ticker: str, reference_date: str = '',
         exchange: IBKR exchange (default 'SMART').
         currency: Currency (default 'USD').
         config: Optional config override.
+        tiers: List of tier names to fetch (default: all three tiers).
 
     Returns:
-        Dict with keys 'short_term', 'medium_term', 'long_term',
-        each containing a DataFrame with columns: t, open, high, low, close, volume.
+        Dict with keys for each requested tier, each containing a DataFrame
+        with columns: t, open, high, low, close, volume.
     """
+    if tiers is None:
+        tiers = ['short_term', 'medium_term', 'long_term']
+
     ref_date = resolve_reference_date(reference_date)
     print(f"  Fetching data for {ticker}, reference date: {ref_date}")
 
     result = {}
-    for tier in ['short_term', 'medium_term', 'long_term']:
+    for tier in tiers:
         print(f"    [{tier}] ", end='')
         df = fetch_tier_data(
             ib=ib,

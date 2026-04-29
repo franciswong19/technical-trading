@@ -211,17 +211,38 @@ $9.10 >= $5.175?  YES --> Condition B satisfied (genuine "open water" between lo
 
 **Condition C -- No overlap (visual open water test)**:
 
-For two pivot lows with an intervening pivot high between them, the highest price in the 3-bar neighborhood of each pivot low must be lower than the pivot high's price. This ensures a genuine peak existed between the lows, not just choppy flat action.
+This is the hardest condition to visualise. It asks: is there a clear, unambiguous peak *between* the two pivot lows — i.e., did price genuinely rally away from both lows before reversing, creating "open water" on the chart?
+
+The test: for the 3-bar neighbourhood around **each** pivot low, the highest price in that neighbourhood must be *below* the intervening pivot high. If a pivot low's nearby bars reach up to or above the intervening pivot high, the two lows are too entangled — there's no clear separation.
 
 ```
-PL1 neighborhood (bars 77-79): highs = [$173.10, $172.90, $173.50] --> max = $173.50
-PL2 neighborhood (bars 132-134): highs = [$177.20, $177.00, $177.40] --> max = $177.40
+         PH @ $185.60 ← intervening pivot high
+        /     \
+       /         \
+  PL1 @ $172.30    PL2 @ $176.50
+  (bar 78)          (bar 133)
+```
+
+Neighbourhood of PL1 (bars 77-79): highs = [$173.10, $172.90, $173.50] → max = $173.50
+Neighbourhood of PL2 (bars 132-134): highs = [$177.20, $177.00, $177.40] → max = $177.40
 Intervening pivot high = $185.60
 
-$173.50 < $185.60?  YES
-$177.40 < $185.60?  YES
---> Condition C satisfied
 ```
+$173.50 < $185.60?  YES  (PL1's neighbourhood doesn't reach the peak)
+$177.40 < $185.60?  YES  (PL2's neighbourhood doesn't reach the peak)
+--> Condition C satisfied -- genuine open water between the two lows
+```
+
+**Failure example** — what "overlap" looks like:
+
+```
+PL1 neighbourhood max = $185.20
+Intervening pivot high = $185.60
+
+$185.20 < $185.60?  YES, but barely.
+```
+
+In practice the algorithm would pass this, but if PL1's neighbourhood max *exceeded* the intervening pivot high, it would mean the bars around PL1 were basically as high as the "peak" — there was no real separation, just choppy sideways action. The two pivots would be rejected as anchor candidates and the more extreme one would be kept.
 
 **Minimum total channel span**:
 
@@ -259,6 +280,56 @@ Pivots found after all filtering: 2 pivot lows, 1 pivot high
 
 Still insufficient? --> Output: regime = "OTHERS", sub_type = "INSUFFICIENT_DATA"
 ```
+
+### 3g. Pivot volume recording (v2 §3.7)
+
+Once the pivots have passed all filters, the algorithm records each pivot's volume context. This is the foundation for every volume-based check downstream (trend confirmation, divergence detection, S/R zone scoring).
+
+For each confirmed pivot, three values are stored:
+
+```
+volume_at_pivot      = mean(volume[i-1], volume[i], volume[i+1])      # 3-bar centred avg
+volume_ratio         = volume_at_pivot / SMA(volume, 20) at bar i      # vs 20-bar baseline
+volume_change_vs_prior = (this_volume - prev_volume) / prev_volume * 100  # % change vs prior same-side pivot
+```
+
+The 3-bar average smooths out single-bar spikes (e.g. a brief news flash that prints one bar of huge volume). The ratio normalises across stocks and time periods (so QQQ's 30M-share day and a small-cap's 100K day can be compared on the same scale).
+
+#### Numeric example: pivot at bar 45 (long-term)
+
+```
+Bar volumes around bar 45:
+  bar 44: 1,180,000
+  bar 45: 1,420,000   ← pivot bar
+  bar 46: 1,150,000
+
+volume_at_pivot = mean(1,180,000, 1,420,000, 1,150,000) = 1,250,000
+
+20-bar SMA of volume at bar 45 = 980,000
+
+volume_ratio = 1,250,000 / 980,000 = 1.28
+
+Interpretation: the pivot occurred on volume 28% above its 20-bar average — a meaningful reversal.
+```
+
+If the prior same-side (HIGH) pivot was at bar 33 with `volume_at_pivot = 1,100,000`, then:
+
+```
+volume_change_vs_prior = (1,250,000 - 1,100,000) / 1,100,000 * 100 = +13.6%
+
+Interpretation: this pivot high formed on heavier volume than the previous high — confirming buying interest on the move up.
+```
+
+#### Why this matters
+
+These three numbers are reused later to decide whether:
+
+- the trend has volume conviction (Step 4a.5)
+- successive anchor pivots are diverging (Step 5e)
+- an S/R zone formed on heavy or light volume (Step 7b)
+- the OBV is leading or lagging price (Step 5f)
+
+Without `volume_at_pivot` recorded, none of those tests can run.
 
 ---
 
@@ -345,7 +416,60 @@ Pivot lows: (bar 50, $180.00), (bar 120, $175.50), (bar 200, $182.00)
 
 **Test 4 -- Trend start point**: The most recent third-order pivot representing a reversal, or the most recent second-order pivot where the sequence changes character.
 
-**Output**: `regime = "TREND"`, `trend_direction = "UPTREND"` or `"DOWNTREND"`.
+**Test 5 -- Volume trend confirmation (v2 §4.2 Step 5, non-blocking)**:
+
+Once Tests 1-4 pass, the algorithm assesses whether volume *supports* the trend. This step is **non-blocking** -- it does NOT change the regime classification. It produces a `volume_confirmed` flag that adjusts the regime's `confidence` score.
+
+Per Edwards & Magee (Ch. 3): *"Volume tends to expand as prices move in the direction of the prevailing trend. In a Bull Market, volume increases when prices rise and dwindles as prices decline."*
+
+The algorithm splits the bars into two groups based on consecutive alternating pivots:
+
+- **with-trend legs**: bars where price was moving in the trend direction (e.g. PL → PH for uptrend)
+- **counter-trend legs**: bars where price was moving against the trend (e.g. PH → PL for uptrend)
+
+```
+volume_trend_ratio = mean(volume on with-trend legs) / mean(volume on counter-trend legs)
+```
+
+#### Numeric example: healthy uptrend volume
+
+```
+Trend direction: UPTREND
+Pivots in sequence: PL@bar50 → PH@bar85 → PL@bar110 → PH@bar148 → PL@bar175 → PH@bar210
+
+With-trend legs (lows → highs): bars 51-85, 111-148, 176-210
+  Avg volume on these bars = 1,420,000
+
+Counter-trend legs (highs → lows): bars 86-110, 149-175
+  Avg volume on these bars = 1,050,000
+
+volume_trend_ratio = 1,420,000 / 1,050,000 = 1.35
+
+1.35 >= 1.10 (threshold) --> volume_confirmed = True
+Interpretation: "Volume expanding on with-trend legs (ratio=1.35) — healthy uptrend"
+Regime confidence is unchanged.
+```
+
+#### Numeric example: bearish divergence
+
+```
+volume_trend_ratio = 850,000 / 1,200,000 = 0.71
+
+0.71 <= 1/1.10 = 0.91 --> volume_confirmed = False
+Interpretation: "Volume expanding AGAINST trend (ratio=0.71) — bearish divergence"
+
+The trend is still classified as TREND (channel will be drawn), but:
+  confidence (originally 0.91) *= (1 - VOLUME_CONFIDENCE_PENALTY)
+  confidence (originally 0.91) *= (1 - 0.15) = 0.91 * 0.85 = 0.77
+```
+
+If the ratio falls between `1/1.10` and `1.10` (i.e. roughly 0.91 to 1.10), the result is **inconclusive** (`volume_confirmed = None`) and confidence is unchanged.
+
+#### Why this is non-blocking
+
+Per Grimes: volume is highly correlated with bar range and volatility, so its predictive power as a trend indicator is limited. Edwards & Magee observed it as a *tendency*, not a rule. Treating volume as a hard gate would suppress real trends in low-volume environments. The confidence penalty (15%) is a soft modifier that ripples into multi-tier conviction scoring.
+
+**Output**: `regime = "TREND"`, `trend_direction = "UPTREND"` or `"DOWNTREND"`, plus `volume_confirmed` and `volume_trend_ratio` fields on the regime result.
 
 ### 4b. BREAK detection (if not TREND)
 
@@ -365,6 +489,66 @@ Check whether price has broken beyond a prior structure.
 | CHOPPY | No consistent pattern, R-squared < 0.30 on both sides |
 | TRANSITIONAL | Recently broken trend, new trend not yet established |
 | INSUFFICIENT_DATA | Not enough bars or fewer than 4 confirmed pivots |
+
+#### 4c.1. SIDEWAYS range volume analysis (v2 §9.1)
+
+When the regime is SIDEWAYS, the algorithm draws a horizontal range (upper = highest resistance zone, lower = lowest support zone) and additionally analyses volume *within* the range. Per Pring (Ch. 5) and Murphy (Ch. 6), volume behaviour during consolidation is highly predictive of the eventual breakout direction.
+
+Two metrics are computed:
+
+**1. Range volume bias** -- splits bars by direction of close-to-close move:
+
+```
+rally_avg = mean(volume on bars where close[i] > close[i-1])
+decline_avg = mean(volume on bars where close[i] < close[i-1])
+
+if rally_avg > decline_avg * 1.15:
+    range_volume_bias = "BULLISH"   # heavier volume on rallies → eventual breakout likely upward
+elif decline_avg > rally_avg * 1.15:
+    range_volume_bias = "BEARISH"   # heavier volume on declines → eventual breakdown likely
+else:
+    range_volume_bias = "NEUTRAL"
+```
+
+**2. Range volume trend** -- slope of the volume series across the range:
+
+```
+volume_slope = linear_regression_slope(volume series over range duration)
+
+if volume_slope < -epsilon:    range_volume_trend = "DECLINING"   # coiling — normal for consolidation
+elif volume_slope > +epsilon:  range_volume_trend = "EXPANDING"   # anomaly — breakout may be imminent
+else:                          range_volume_trend = "FLAT"
+```
+
+#### Numeric example: bullish bias inside a range
+
+```
+Range duration: 80 bars
+Bars where close went up:   52 bars, avg volume = 1,250,000
+Bars where close went down: 28 bars, avg volume = 970,000
+
+rally_avg / decline_avg = 1,250,000 / 970,000 = 1.29
+
+1.29 > 1.15 --> range_volume_bias = BULLISH
+Interpretation: Buyers are showing more conviction on up days. If a breakout occurs, it's more likely to be upward.
+```
+
+#### Numeric example: declining volume (coiling)
+
+```
+Volume regression slope across the 80-bar range = -3,200 per bar
+Avg volume = 950,000
+epsilon = 0.5% × 950,000 = 4,750
+
+|-3,200| > 4,750? NO → flat
+But if slope = -8,500: |-8,500| > 4,750 --> range_volume_trend = DECLINING
+
+Interpretation: Volume is drying up as the range matures — classic coiling pattern.
+Per Pring: volume "almost dries up" as a rectangle nears completion.
+A breakout on expanding volume after this coiling would be a high-conviction signal.
+```
+
+If `range_volume_trend = EXPANDING` instead, that's an anomaly worth flagging — consolidation usually quiets down, and expanding volume during sideways action often precedes a near-term breakout.
 
 ---
 
@@ -569,6 +753,165 @@ Example:
      \/
 ```
 
+### 5e. Volume divergence at anchor points (v2 §5.9)
+
+Once the channel is constructed, the algorithm walks across successive anchor pivots and checks whether volume *confirms* or *contradicts* each new high/low. Per Pring (Principle 5) and Edwards & Magee (Ch. 6), this is one of the most reliable volume-based signals.
+
+**For an UPTREND**, the algorithm focuses on the resistance side (pivot highs):
+
+```
+For each pair of consecutive pivot highs (PH_n, PH_n+1):
+
+  Bearish divergence:
+    PH_n+1.price > PH_n.price             # Higher high...
+    AND
+    PH_n+1.volume_at_pivot < PH_n.volume_at_pivot   # ...on lower volume
+
+  This is the classic "tab the chart with a red signal" pattern from E&M.
+```
+
+**For a DOWNTREND**, the algorithm focuses on pivot lows:
+
+```
+  Bullish divergence (potential bottom):
+    PL_n+1.price < PL_n.price             # Lower low...
+    AND
+    PL_n+1.volume_at_pivot < PL_n.volume_at_pivot   # ...on lower volume
+
+  Selling pressure is exhausting.
+```
+
+The number of *consecutive* divergences determines the warning level:
+
+| `divergence_count` | `divergence_warning` |
+|---|---|
+| 0 | NONE |
+| 1 | MILD |
+| 2 or more | SIGNIFICANT |
+
+Per Pring: *"the greater the number of divergences, the weaker the technical position."*
+
+#### Numeric example: SIGNIFICANT bearish divergence in an uptrend
+
+```
+Three consecutive pivot highs in an uptrend:
+  PH1 (bar 108): price=$185.60, volume_at_pivot=1,420,000  (volume_ratio=1.45)
+  PH2 (bar 155): price=$188.90, volume_at_pivot=1,180,000  (volume_ratio=1.20)
+  PH3 (bar 178): price=$190.20, volume_at_pivot=950,000    (volume_ratio=0.95)
+
+Comparison 1 (PH1 → PH2):
+  $188.90 > $185.60? YES (higher high)
+  1,180,000 < 1,420,000? YES (lower volume)
+  --> divergent (consecutive=1)
+
+Comparison 2 (PH2 → PH3):
+  $190.20 > $188.90? YES
+  950,000 < 1,180,000? YES
+  --> divergent (consecutive=2)
+
+divergence_count = 2 --> divergence_warning = "SIGNIFICANT"
+```
+
+On the chart, each divergent pivot gets a small red "VD" flag annotation above (uptrend) or below (downtrend) the pivot, with hover text showing the price, volume ratio, and the prior pivot's volume.
+
+#### Numeric example: NONE (healthy uptrend)
+
+```
+PH1: $185.60, volume=1,420,000
+PH2: $188.90, volume=1,510,000  (higher high AND higher volume)
+PH3: $190.20, volume=1,580,000  (higher high AND higher volume)
+
+No divergences. divergence_warning = "NONE".
+This is what a textbook healthy uptrend looks like in volume terms.
+```
+
+### 5f. On-Balance Volume (OBV) trend tracking (v2 §5.10)
+
+OBV is a cumulative volume-flow indicator. Per Pring (Ch. 23), requiring joint trendline breaks in BOTH OBV and price is *"probably the best way to interpret OBV."* The engine plots OBV as a subplot beneath each tier's price chart.
+
+#### Cumulative OBV computation
+
+```
+OBV[0] = 0
+For each bar i ≥ 1:
+    if close[i] > close[i-1]:    OBV[i] = OBV[i-1] + volume[i]
+    elif close[i] < close[i-1]:  OBV[i] = OBV[i-1] - volume[i]
+    else:                        OBV[i] = OBV[i-1]
+```
+
+#### Worked example: 5 bars
+
+```
+Bar  Close    Volume     OBV
+0    $100.00  500,000    0
+1    $101.50  600,000    +600,000      (close up → add)
+2    $101.20  450,000    +150,000      (close down → subtract: 600k - 450k)
+3    $102.30  720,000    +870,000      (close up → add)
+4    $102.30  300,000    +870,000      (close flat → unchanged)
+```
+
+#### OBV trend analysis
+
+The algorithm fits a regression to OBV over the same bar range as the price channel:
+
+```
+OBV slope (over channel span) = +12,500 per bar
+OBV R-squared = 0.78
+```
+
+It then classifies confirmation vs price trend:
+
+| Price trend | OBV slope | `obv_confirmation` |
+|---|---|---|
+| UPTREND | positive | CONFIRMED (accumulation) |
+| UPTREND | flat or negative | DIVERGENT (distribution) |
+| DOWNTREND | negative | CONFIRMED (distribution) |
+| DOWNTREND | flat or positive | DIVERGENT (accumulation) |
+
+#### Joint trendline break detection
+
+The algorithm also draws a trendline on OBV itself (regression + anchor anchored to the start of the channel span), and compares whether OBV's trendline is broken at the same time as price's primary trendline:
+
+| `obv_trendline_broken` | `price_trendline_broken` | `joint_break` |
+|---|---|---|
+| True | True | CONFIRMED (highest conviction reversal — both volume flow and price say trend is over) |
+| True | False | OBV_LEADING (early warning — watch for price to follow) |
+| False | True | NONE (price broke but volume flow still intact — could be a false break) |
+| False | False | NONE (trend intact) |
+
+#### Numeric example: OBV_LEADING signal
+
+```
+Price trend: UPTREND, primary line at bar 210 = $190.50
+Current price[210] = $191.20 (still above trendline → price NOT broken)
+
+OBV trendline at bar 210 = +180,000
+Current OBV[210] = +145,000 (below trendline → OBV broken)
+
+obv_trendline_broken = True
+price_trendline_broken = False
+--> joint_break = "OBV_LEADING"
+
+Interpretation: Volume flow has already turned negative even though price hasn't.
+Often precedes a price reversal by several bars.
+```
+
+#### Numeric example: CONFIRMED joint break
+
+```
+A few bars later:
+Price[215] = $189.80 (now below trendline)
+OBV[215] = +130,000 (still below trendline)
+
+obv_trendline_broken = True
+price_trendline_broken = True
+--> joint_break = "CONFIRMED"
+
+Interpretation: Highest-conviction reversal signal per Pring. Both indicators agree.
+```
+
+The OBV subplot in the chart shows the OBV series as a purple line and the OBV trendline as a darker dashed purple line. The shared x-axis lets you visually align OBV breaks with price action.
+
 ---
 
 ## Step 6: Slope and Width Validation
@@ -724,20 +1067,37 @@ Recency (exponential decay):
   recency_score = 0.403 + 0.530 + 0.705 = 1.638
   Recency component = 1.638 x 1.5 = 2.457
 
-Volume (normalized to average):
-  Avg volume at touches = 5.2M, overall avg = 4.0M
-  volume_score = 5.2 / 4.0 = 1.30
-  Volume component = 1.30 x 1.0 = 1.30
+Volume (v2 §11.2-11.3 — uses volume_ratio recorded at each touching pivot in Step 3g):
+  Touch 1 volume_ratio = 1.45 (formed on heavy volume)
+  Touch 2 volume_ratio = 1.10
+  Touch 3 volume_ratio = 1.30
+  avg_volume_ratio_at_touches = (1.45 + 1.10 + 1.30) / 3 = 1.28
+  volume_score = 1.28 x 1.0 = 1.28
+  Per Edwards & Magee Ch. 13: heavy-volume tops/bottoms create powerful S/R.
 
 Role reversal:
   Zone acted as both support AND resistance? YES (was resistance, then became support)
   role_reversal_bonus = 1
   Reversal component = 1 x 3.0 = 3.0
 
-zone_score = 6.0 + 2.457 + 1.30 + 3.0 = 12.757
+zone_score = 6.0 + 2.457 + 1.28 + 3.0 = 12.737
 
 Minimum required: 4.0
-12.757 >= 4.0 --> ZONE ACCEPTED
+12.737 >= 4.0 --> ZONE ACCEPTED
+```
+
+#### Comparison: same zone but light-volume touches
+
+```
+Same 3-touch cluster, but each touch formed on volume_ratio = 0.75 (light volume):
+  avg_volume_ratio_at_touches = 0.75
+  volume_score = 0.75 x 1.0 = 0.75
+
+zone_score = 6.0 + 2.457 + 0.75 + 3.0 = 12.207
+
+Still passes the 4.0 minimum, but scores 0.5 points lower than the heavy-volume zone.
+This means in a multi-zone shortlist, the heavy-volume zone is ranked higher and
+treated as more reliable.
 ```
 
 ### 7c. Decay and weakening
@@ -784,13 +1144,26 @@ Close must be beyond the level by at least `ATR_BREAKOUT_MULTIPLIER x ATR(14)`.
 ATR_BREAKOUT_MULTIPLIER = 0.5 (same for all tiers)
 ```
 
-### Filter 3 -- Volume filter
+### Filter 3 -- Volume filter (DIRECTIONAL, v2 §8.2)
 
-Volume on breakout bar must be >= `VOLUME_BREAKOUT_MULTIPLIER x avg_volume(20)`.
+Volume rule depends on the **direction** of the break. Per Edwards & Magee (Ch. 17): *"It takes buying to put prices up, but prices can fall of their own weight."*
 
 ```
-VOLUME_BREAKOUT_MULTIPLIER = 1.25 (same for all tiers)
+For BREAKOUT (upward):
+    volume_filter PASSES if volume[break_bar] >= 1.25 x avg_volume(20)
+    Volume confirmation is REQUIRED — an upside break on low volume is suspect.
+
+For BREAKDOWN (downward):
+    volume_filter AUTO-PASSES regardless of volume.
+    Downside breaks are valid even on declining volume.
+    However, breakdown_volume_elevated is recorded as a diagnostic flag if
+    volume happened to be high (adds conviction but isn't required).
 ```
+
+This asymmetry has practical consequences:
+
+- An upside break that fails Filter 3 likely fails confirmation (only 1-2/3 filters pass). False breakouts are common.
+- A downside break passes Filter 3 automatically, so it's typically confirmed once Filter 1 (close) and Filter 2 (ATR) are satisfied. Downside breaks are easier to confirm — which matches market reality (markets can fall on no news).
 
 ### Numeric example: breakout confirmed
 
@@ -864,6 +1237,55 @@ Bar 3: close = $197.90 (below $198.50!) --> FAILED time confirmation
 ### Post-break behavior
 
 After a confirmed break, the broken level becomes an S/R level with `role_reversal: true`. Price commonly retests the broken level (~60% of the time). The former resistance at $198.50 now becomes support.
+
+### 8d. Volume climax caution (v2 §8.2.1)
+
+**Empirical caveat from Bulkowski (Ch. 41)**: Heavy breakout-day volume (>3× average) actually **triples** failure rates. After above-average volume, upward breakouts fail 14% of the time vs. only 5% after below-average volume. This directly contradicts the classical wisdom that heavy volume confirms breakouts.
+
+The algorithm flags this as a **caution** without preventing confirmation:
+
+```
+if breakout_volume > VOLUME_CLIMAX_MULTIPLIER x avg_volume_20:
+    volume_climax_caution = True
+
+VOLUME_CLIMAX_MULTIPLIER = 3.0
+```
+
+#### Numeric example: climax flag triggered
+
+```
+Average volume (20-bar) = 4.0M
+Breakout bar volume = 14.5M
+
+14.5M / 4.0M = 3.625x average
+
+3.625 > 3.0 --> volume_climax_caution = True
+
+The breakout is still confirmed (filters 1, 2, 3 all pass on big volume).
+But the algorithm tags it: "Possible exhaustion/climax rather than genuine follow-through.
+Watch for throwback/pullback with extra vigilance. Consider this a SHORT-TERM blow-off
+rather than start of sustained move."
+
+On the chart, a yellow CLIMAX star annotation appears at the breakout bar.
+```
+
+#### Numeric example: normal breakout (no climax)
+
+```
+Average volume (20-bar) = 4.0M
+Breakout bar volume = 5.8M
+
+5.8M / 4.0M = 1.45x average
+
+1.45 > 1.25 → Filter 3 passes (breakout confirmed)
+1.45 < 3.0 → volume_climax_caution = False
+
+Standard healthy breakout. No special warning.
+```
+
+Why the algorithm doesn't auto-reject climax breaks:
+
+Per Bulkowski's data, performance after heavy-volume breaks averages only 1.8 percentage points *better* than after light-volume breaks — but the failure rate triples. So the *expected return* is mixed. Better to confirm the break and let the user/downstream logic decide whether to size differently.
 
 ---
 
@@ -1020,12 +1442,34 @@ The algorithm produces one JSON per ticker containing:
 | `regime.state` | TREND, BREAK, or OTHERS |
 | `regime.trend_direction` | UPTREND or DOWNTREND (TREND only) |
 | `regime.r_squared` | How well pivots fit a line (0.0 to 1.0; higher = cleaner trend) |
+| `regime.confidence` | r_squared, reduced by 15% if `volume_confirmed = False` (v2) |
+| `regime.volume_confirmed` | True = healthy volume on with-trend legs; False = bearish divergence; None = inconclusive (v2) |
+| `regime.volume_trend_ratio` | with-trend volume / counter-trend volume (>=1.10 = healthy) (v2) |
 | `trend_channel.channel_geometry` | PARALLEL, RISING_WEDGE, FALLING_WEDGE, BROADENING, TRIANGLE |
 | `trend_channel.steep_flag` | true = unsustainably steep, break expected |
 | `trend_channel.channel_width_pct` | Width as % of price; too narrow = noise, too wide = useless |
 | `trend_channel.current_price_position.pct_within_channel` | 0% = at lower line, 100% = at upper line |
-| `support_resistance_zones[].zone_score` | Higher = stronger zone |
+| `trend_channel.volume_divergence.divergence_warning` | NONE / MILD / SIGNIFICANT — bearish-divergence count at recent anchor pivots (v2) |
+| `trend_channel.obv_analysis.obv_slope_direction` | POSITIVE / NEGATIVE / FLAT — direction of OBV regression (v2) |
+| `trend_channel.obv_analysis.obv_confirmation` | CONFIRMED (OBV agrees with price trend) / DIVERGENT (OBV disagrees) (v2) |
+| `trend_channel.obv_analysis.joint_break` | NONE / OBV_LEADING (early warning) / CONFIRMED (highest-conviction reversal) (v2) |
+| `support_resistance_zones[].zone_score` | Higher = stronger zone (now includes volume contribution per v2) |
 | `support_resistance_zones[].role_reversal` | true = former support became resistance (or vice versa) |
+| `support_resistance_zones[].avg_volume_ratio_at_touches` | Average volume_ratio across the zone's touching pivots; >1.0 = formed on heavy volume (v2) |
+| `break_info.volume_climax_caution` | true = breakout volume >3x average; per Bulkowski, triples failure rates (v2) |
+| `break_info.breakdown_volume_elevated` | Diagnostic only; not used to gate downside breaks per v2 directional rule |
+| `horizontal_range.range_volume_bias` | BULLISH / BEARISH / NEUTRAL — directional tell within SIDEWAYS range (v2) |
+| `horizontal_range.range_volume_trend` | DECLINING (coiling) / FLAT / EXPANDING (anomaly) (v2) |
+
+### How volume appears on the chart (v2)
+
+Each tier's chart now includes:
+
+- **OBV subplot below price** (shared x-axis, ~25% of chart height): the cumulative OBV series in purple, with the OBV trendline as a darker dashed line. Visually align an OBV trendline break with what's happening on price.
+- **Volume divergence flags** ("VD" red triangle annotations): appear above bearish-divergence pivot highs (uptrend) or below bullish-divergence pivot lows (downtrend). Hover for the volume ratio and prior-pivot volume.
+- **Volume climax marker** (yellow "CLIMAX" star): appears at a breakout bar when `volume_climax_caution = True`. Hover explains the Bulkowski caveat.
+
+The text summary table beside each chart surfaces the volume metrics (volume trend, OBV status, joint break, range bias, etc.) so the user gets both the visual signal and the textual interpretation.
 
 ### Current price position within the channel
 
@@ -1151,4 +1595,34 @@ OTHERS --> TREND:
 
 BREAK --> TREND:
   The break level and pullback/throwback level become key S/R
+```
+
+### Volume-specific edge cases (v2)
+
+```
+1) Missing or zero volume column:
+     - All volume fields default to neutral (volume_ratio = 1.0,
+       volume_confirmed = None, volume_score component = 1.0).
+     - The pipeline still runs end-to-end; volume just contributes nothing
+       to scoring or confirmation.
+
+2) Single same-side pivot (no prior to compare):
+     - volume_change_vs_prior stays at 0.0 (no comparison possible)
+     - Divergence detection requires >=2 same-side pivots; otherwise warning = NONE
+
+3) Volume MA not yet warmed up (first 19 bars):
+     - SMA(volume, 20) is NaN for bars 0..18
+     - For pivots at those bars, volume_ratio defaults to 1.0 (neutral)
+     - Avoid relying on early-window pivot volume_ratios
+
+4) OBV_ENABLED = False (config flip):
+     - obv_analysis is None on every channel
+     - chart_builder skips the OBV subplot and renders price-only single-row chart
+     - report_generator omits the OBV row in the summary table
+
+5) Volume climax during BREAKDOWN:
+     - The 3x threshold is checked symmetrically: a downside break on >3x avg volume
+       also gets volume_climax_caution = True (Bulkowski's failure-rate finding
+       applies to breakdowns too, though less dramatically).
+     - The user should treat this as "panic flush" rather than "start of new downtrend".
 ```

@@ -13,7 +13,8 @@ from .config import get_tier_param, CONFIG
 
 def check_trend(pivot_highs: list[PivotPoint], pivot_lows: list[PivotPoint],
                 atr_value: float, tier: str,
-                config: dict = None) -> RegimeResult | None:
+                config: dict = None,
+                ohlc_df=None) -> RegimeResult | None:
     """Check if a directional TREND regime exists (Section 4.2).
 
     Steps:
@@ -21,6 +22,7 @@ def check_trend(pivot_highs: list[PivotPoint], pivot_lows: list[PivotPoint],
     2. Pivot spacing validation (already applied in pivots.py)
     3. Quantitative confirmation via linear regression (R² >= 0.50)
     4. Trend start point identification
+    5. Volume trend confirmation (v2, non-blocking — sets volume_confirmed flag)
 
     Returns:
         RegimeResult with state='TREND' if confirmed, else None.
@@ -33,13 +35,15 @@ def check_trend(pivot_highs: list[PivotPoint], pivot_lows: list[PivotPoint],
     if len(pivot_highs) < 2 or len(pivot_lows) < 2:
         return None
 
+    tolerance = cfg.get('TREND_TOLERANCE_PCT', 0.0)
+
     # Step 1: Check for higher highs + higher lows (uptrend)
-    uptrend = _check_consecutive_pattern(pivot_highs, 'higher') and \
-              _check_consecutive_pattern(pivot_lows, 'higher')
+    uptrend = _check_consecutive_pattern(pivot_highs, 'higher', tolerance) and \
+              _check_consecutive_pattern(pivot_lows, 'higher', tolerance)
 
     # Check for lower highs + lower lows (downtrend)
-    downtrend = _check_consecutive_pattern(pivot_highs, 'lower') and \
-                _check_consecutive_pattern(pivot_lows, 'lower')
+    downtrend = _check_consecutive_pattern(pivot_highs, 'lower', tolerance) and \
+                _check_consecutive_pattern(pivot_lows, 'lower', tolerance)
 
     if not uptrend and not downtrend:
         return None
@@ -55,8 +59,24 @@ def check_trend(pivot_highs: list[PivotPoint], pivot_lows: list[PivotPoint],
     if len(primary_pivots) < 2:
         return None
 
-    indices = np.array([p.bar_index for p in primary_pivots], dtype=float)
-    prices = np.array([p.price for p in primary_pivots], dtype=float)
+    # Find the trend start first so regression only covers the current trend
+    # segment, not the full history. Running regression over all pivots fails
+    # when the window contains a prior opposing trend (V-shape, etc.) because
+    # the overall slope flattens and R² collapses even though the recent
+    # consecutive streak is strong.
+    trend_start = _find_trend_start(primary_pivots, direction, tolerance)
+    trend_start_idx = next(
+        (i for i, p in enumerate(primary_pivots)
+         if p.bar_index == trend_start.bar_index),
+        0,
+    )
+    regression_pivots = primary_pivots[trend_start_idx:]
+
+    if len(regression_pivots) < 2:
+        return None
+
+    indices = np.array([p.bar_index for p in regression_pivots], dtype=float)
+    prices = np.array([p.price for p in regression_pivots], dtype=float)
 
     slope, intercept, r_squared = _fit_regression(indices, prices)
 
@@ -69,25 +89,42 @@ def check_trend(pivot_highs: list[PivotPoint], pivot_lows: list[PivotPoint],
     if r_squared < min_r_squared:
         return None
 
-    # Step 4: Trend start point — use the earliest primary pivot in the sequence
-    trend_start = _find_trend_start(primary_pivots, direction)
+    confidence = r_squared
+
+    # Step 5 (v2): Volume trend confirmation — non-blocking, modifies confidence
+    volume_confirmed = None
+    volume_trend_ratio = 0.0
+    if ohlc_df is not None and 'volume' in ohlc_df.columns:
+        from .volume import check_volume_trend
+        volume_confirmed, volume_trend_ratio, _interp = check_volume_trend(
+            pivot_highs, pivot_lows, ohlc_df, direction, cfg
+        )
+        if volume_confirmed is False:
+            penalty = cfg.get('VOLUME_CONFIDENCE_PENALTY', 0.15)
+            confidence *= (1.0 - penalty)
 
     return RegimeResult(
         state='TREND',
         trend_direction=direction,
-        confidence=r_squared,
+        confidence=confidence,
         r_squared=r_squared,
         trend_start_bar_index=trend_start.bar_index,
         trend_start_timestamp=trend_start.timestamp,
+        volume_confirmed=volume_confirmed,
+        volume_trend_ratio=volume_trend_ratio,
     )
 
 
-def _check_consecutive_pattern(pivots: list[PivotPoint], pattern: str) -> bool:
+def _check_consecutive_pattern(pivots: list[PivotPoint], pattern: str,
+                               tolerance: float = 0.0) -> bool:
     """Check if at least 2 consecutive pivots follow a 'higher' or 'lower' pattern.
 
     Args:
         pivots: List of same-type pivots sorted by bar_index.
         pattern: 'higher' (each > prev) or 'lower' (each < prev).
+        tolerance: Fractional allowance — a pivot may be up to this fraction
+                   below/above the previous one and still count as higher/lower.
+                   E.g. 0.0025 allows up to 0.25% pullback in an uptrend.
 
     Returns:
         True if at least 2 consecutive pivots match the pattern.
@@ -99,9 +136,11 @@ def _check_consecutive_pattern(pivots: list[PivotPoint], pattern: str) -> bool:
     # Need at least 2 consecutive matches
     consecutive = 0
     for i in range(len(pivots) - 1, 0, -1):
-        if pattern == 'higher' and pivots[i].price > pivots[i - 1].price:
-            consecutive += 1
-        elif pattern == 'lower' and pivots[i].price < pivots[i - 1].price:
+        if pattern == 'higher':
+            passes = pivots[i].price >= pivots[i - 1].price * (1 - tolerance)
+        else:
+            passes = pivots[i].price <= pivots[i - 1].price * (1 + tolerance)
+        if passes:
             consecutive += 1
         else:
             break
@@ -110,17 +149,20 @@ def _check_consecutive_pattern(pivots: list[PivotPoint], pattern: str) -> bool:
 
 
 def _find_trend_start(primary_pivots: list[PivotPoint],
-                      direction: str) -> PivotPoint:
+                      direction: str, tolerance: float = 0.0) -> PivotPoint:
     """Find the trend start point — the most recent reversal pivot.
 
-    For uptrend: the lowest pivot low before the higher-lows sequence began.
-    For downtrend: the highest pivot high before the lower-highs sequence began.
+    For uptrend: walk backwards and stop at the first pivot that is genuinely
+    lower than the previous one (by more than tolerance × price). Minor
+    pullbacks within the tolerance band are treated as continuation.
+    For downtrend: symmetric logic on the high side.
     """
-    # Walk backwards to find where the sequence breaks
     for i in range(len(primary_pivots) - 1, 0, -1):
-        if direction == 'UPTREND' and primary_pivots[i].price <= primary_pivots[i - 1].price:
-            return primary_pivots[i]
-        elif direction == 'DOWNTREND' and primary_pivots[i].price >= primary_pivots[i - 1].price:
+        if direction == 'UPTREND':
+            genuine_break = primary_pivots[i].price < primary_pivots[i - 1].price * (1 - tolerance)
+        else:
+            genuine_break = primary_pivots[i].price > primary_pivots[i - 1].price * (1 + tolerance)
+        if genuine_break:
             return primary_pivots[i]
 
     return primary_pivots[0]
@@ -192,8 +234,9 @@ def classify_regime(pivot_highs: list[PivotPoint], pivot_lows: list[PivotPoint],
     # Import here to avoid circular import
     from .breakout import check_break
 
-    # Step 1: Check TREND
-    trend_result = check_trend(pivot_highs, pivot_lows, atr_value, tier, config)
+    # Step 1: Check TREND (pass ohlc_df for v2 volume confirmation)
+    trend_result = check_trend(pivot_highs, pivot_lows, atr_value, tier, config,
+                               ohlc_df=ohlc_df)
     if trend_result is not None:
         return trend_result
 
